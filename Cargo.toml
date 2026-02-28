@@ -1,0 +1,49 @@
+[workspace]
+members = [
+    "crates/rslean-name",
+    "crates/rslean-level",
+    "crates/rslean-expr",
+    "crates/rslean-kernel",
+    "crates/rslean-olean",
+    "crates/rslean-check",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# Internal crates
+rslean-name = { path = "crates/rslean-name" }
+rslean-level = { path = "crates/rslean-level" }
+rslean-expr = { path = "crates/rslean-expr" }
+rslean-kernel = { path = "crates/rslean-kernel" }
+rslean-olean = { path = "crates/rslean-olean" }
+
+# String interning
+lasso = "0.7"
+
+# Fast hash maps
+rustc-hash = "2"
+
+# Arbitrary precision integers
+num-bigint = "0.4"
+num-traits = "0.2"
+num-integer = "0.1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Binary parsing
+binrw = "0.14"
+memmap2 = "0.9"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"

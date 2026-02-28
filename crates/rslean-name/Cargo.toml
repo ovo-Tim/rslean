@@ -1,0 +1,11 @@
+[package]
+name = "rslean-name"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lasso = { workspace = true }
+rustc-hash = { workspace = true }
+num-bigint = { workspace = true }
+
+[dev-dependencies]

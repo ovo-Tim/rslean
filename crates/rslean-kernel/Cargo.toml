@@ -1,0 +1,14 @@
+[package]
+name = "rslean-kernel"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rslean-name = { workspace = true }
+rslean-level = { workspace = true }
+rslean-expr = { workspace = true }
+rustc-hash = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]

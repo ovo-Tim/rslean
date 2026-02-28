@@ -1,0 +1,19 @@
+[package]
+name = "rslean-check"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "rslean"
+path = "src/main.rs"
+
+[dependencies]
+rslean-name = { workspace = true }
+rslean-level = { workspace = true }
+rslean-expr = { workspace = true }
+rslean-kernel = { workspace = true }
+rslean-olean = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

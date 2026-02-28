@@ -1,0 +1,10 @@
+[package]
+name = "rslean-level"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rslean-name = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]

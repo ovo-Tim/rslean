@@ -1,0 +1,18 @@
+[package]
+name = "rslean-olean"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rslean-name = { workspace = true }
+rslean-level = { workspace = true }
+rslean-expr = { workspace = true }
+rslean-kernel = { workspace = true }
+rustc-hash = { workspace = true }
+num-bigint = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+memmap2 = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
