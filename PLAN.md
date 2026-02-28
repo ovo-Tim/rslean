@@ -594,31 +594,8 @@ $ rslean verify Mathlib.Data.Nat.Basic
 
 ---
 
-## Summary: Estimated Effort
 
-| Phase     | Component                  | New Rust LOC | Difficulty | Safety    |
-| --------- | -------------------------- | ------------ | ---------- | --------- |
-| 1         | Kernel + types + .olean    | 15-20K       | Medium     | 100% safe |
-| 2         | Parser                     | 10-15K       | Medium     | 100% safe |
-| 3         | Interpreter (safe Lean VM) | 15-20K       | Medium     | 100% safe |
-| 4         | Bootstrap elaborator       | 25-35K       | **Hard**   | 100% safe |
-| 5         | Integration + CLI          | ~5K          | Easy       | 100% safe |
-| **Total** |                            | **~70-95K**  |            | **100%**  |
 
-Reused from Lean 4 (interpreted, not rewritten): **~200K+ lines** of existing
-Lean source code (Meta, Elab, Tactic, Init).
-
-### Comparison with previous (unsafe) plan
-
-|                | Old plan (compile to native)                 | New plan (interpret in safe VM)     |
-| -------------- | -------------------------------------------- | ----------------------------------- |
-| New Rust code  | ~90-125K                                     | **~70-95K** (less)                  |
-| Memory safety  | Partial (runtime safe, compiled code unsafe) | **100% safe**                       |
-| Tactic support | All (compiled native)                        | All (interpreted)                   |
-| Performance    | Native speed                                 | ~10-50x slower for tactic execution |
-| Code generator | Required (~15-20K)                           | **Not needed**                      |
-| C/C++ runtime  | Required (~10-15K)                           | **Not needed**                      |
-| Scope          | General-purpose compiler                     | Prover only                         |
 
 ## Recommended Build Order
 
@@ -713,20 +690,20 @@ crates/rslean-interp/src/
 
 #### What's implemented
 
-| Component               | Details                                                                                                                                                                                                                                                           |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Value**               | `Nat(Arc<BigUint>)`, `String(Arc<str>)`, `Ctor{tag,name,fields}`, `Closure{func,captured,arity}`, `Array`, `Erased`, `KernelExpr`                                                                                                                                 |
-| **FuncRef**             | `Definition`, `Lambda`, `Builtin`, `CtorFn`, `RecursorFn`                                                                                                                                                                                                         |
-| **eval()**              | All 12 ExprKind variants handled                                                                                                                                                                                                                                  |
-| **Const eval**          | Definition/Theorem body evaluation, Constructor → Ctor values, Recursor → iota reduction                                                                                                                                                                          |
-| **Iota reduction**      | Lambda-wrapped RHS application; IH computed via embedded recursive calls in RHS; Nat special-casing (0 → Nat.zero, n+1 → Nat.succ)                                                                                                                                |
-| **Nat constructors**    | `Nat.zero` → `Value::Nat(0)`, `Nat.succ(Nat(n))` → `Value::Nat(n+1)` (keeps Nat representation)                                                                                                                                                                   |
-| **Partial application** | Closures accumulate args until fully applied                                                                                                                                                                                                                      |
-| **Stack overflow**      | Depth limit of 256 (prevents runaway recursion)                                                                                                                                                                                                                   |
-| **Const caching**       | Level-monomorphic constants cached after first evaluation                                                                                                                                                                                                         |
-| **72 builtins**         | Nat (18), String (13), Bool (1), Array (5), UInt32 (10), UInt64 (10), UInt8/16 (4), USize (2), Char (2), ST.Ref (4), IO (3)                                                                                                                                  |
-| **Multi-module olean**  | BFS dependency-resolving loader; loads Init.Data.List.Basic and all transitive deps                                                                                                                                                                                |
-| **.olean integration**  | Load Init.Prelude, evaluate real definitions (Nat.add, Bool.not, id, etc.)                                                                                                                                                                                        |
+| Component               | Details                                                                                                                            |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Value**               | `Nat(Arc<BigUint>)`, `String(Arc<str>)`, `Ctor{tag,name,fields}`, `Closure{func,captured,arity}`, `Array`, `Erased`, `KernelExpr`  |
+| **FuncRef**             | `Definition`, `Lambda`, `Builtin`, `CtorFn`, `RecursorFn`                                                                          |
+| **eval()**              | All 12 ExprKind variants handled                                                                                                   |
+| **Const eval**          | Definition/Theorem body evaluation, Constructor → Ctor values, Recursor → iota reduction                                           |
+| **Iota reduction**      | Lambda-wrapped RHS application; IH computed via embedded recursive calls in RHS; Nat special-casing (0 → Nat.zero, n+1 → Nat.succ) |
+| **Nat constructors**    | `Nat.zero` → `Value::Nat(0)`, `Nat.succ(Nat(n))` → `Value::Nat(n+1)` (keeps Nat representation)                                    |
+| **Partial application** | Closures accumulate args until fully applied                                                                                       |
+| **Stack overflow**      | Depth limit of 256 (prevents runaway recursion)                                                                                    |
+| **Const caching**       | Level-monomorphic constants cached after first evaluation                                                                          |
+| **72 builtins**         | Nat (18), String (13), Bool (1), Array (5), UInt32 (10), UInt64 (10), UInt8/16 (4), USize (2), Char (2), ST.Ref (4), IO (3)        |
+| **Multi-module olean**  | BFS dependency-resolving loader; loads Init.Data.List.Basic and all transitive deps                                                |
+| **.olean integration**  | Load Init.Prelude, evaluate real definitions (Nat.add, Bool.not, id, etc.)                                                         |
 
 #### Key design decisions
 
@@ -774,7 +751,7 @@ crates/rslean-interp/src/
 | UInt64 builtins    | 1      | wrapping add overflow                                                                    |
 | ST/Ref builtins    | 1      | mk + get via direct fn call                                                              |
 | .olean integration | 8      | Nat.add, Nat.mul, Nat.succ, Nat.pow, Bool.not, Bool.and, id, String.length               |
-| Multi-module olean | 2      | List.map via brecOn, List.rec direct (loads Init.Data.List.Basic + deps)                  |
+| Multi-module olean | 2      | List.map via brecOn, List.rec direct (loads Init.Data.List.Basic + deps)                 |
 | Other              | 6      | FVar passthrough, zero-arity ctor, stack overflow, partial app, lambda capture, Nat.pred |
 | **Total**          | **55** |                                                                                          |
 
