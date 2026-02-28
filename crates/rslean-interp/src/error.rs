@@ -31,9 +31,6 @@ pub enum InterpError {
     #[error("builtin error: {0}")]
     BuiltinError(String),
 
-    #[error("not a constructor value")]
-    NotACtor,
-
     #[error("kernel error: {0}")]
     KernelError(#[from] rslean_kernel::KernelError),
 }

@@ -95,8 +95,10 @@ pub fn apply_recursor(
         })?;
 
     // Build substitution for the rule RHS:
-    // The RHS expects: params, motives, minors, then constructor fields
-    // (with recursive arguments getting the recursive result applied).
+    // The RHS expects: params, motives, minors, then constructor fields.
+    // Note: the IH (induction hypothesis) for recursive fields is NOT passed
+    // as part of the substitution — the rule RHS contains embedded recursive
+    // calls to the recursor that compute the IH during evaluation.
     let mut subst: Vec<Value> = Vec::new();
 
     // 1. Parameters
@@ -114,37 +116,26 @@ pub fn apply_recursor(
         subst.push(arg.clone());
     }
 
-    // 4. Constructor fields
-    // For recursive fields, we need to also apply the recursor to them.
-    // For now, just pass the fields directly — the rule RHS handles recursion
-    // via the minor premises.
+    // 4. Constructor fields (without IH — the RHS computes IH internally)
     for field in &ctor_fields {
         subst.push(field.clone());
     }
 
-    // Instantiate the rule RHS with the substitution (reversed for de Bruijn).
+    // Instantiate the rule RHS with universe levels.
     let level_params = info.level_params();
     let mut rhs = rule.rhs.clone();
     if !level_params.is_empty() && !levels.is_empty() {
         rhs = rhs.instantiate_level_params(level_params, levels);
     }
 
-    // The RHS uses de Bruijn indices referring to the substitution in reverse order.
-    let subst_exprs: Vec<rslean_expr::Expr> = (0..subst.len())
-        .map(|_| rslean_expr::Expr::bvar(0)) // placeholder — we eval via local env
-        .collect();
-    let _ = subst_exprs;
-
-    // The RHS has de Bruijn indices where bvar(0) = most recently bound.
-    // Our subst is in order: [params, motives, minors, fields].
-    // Since push() prepends, pushing in forward order means the last pushed
-    // (fields) will be at bvar(0), which is the correct de Bruijn convention.
-    let mut local_env = LocalEnv::new();
+    // The RHS in .olean files is a closed lambda that takes the substitution
+    // values as parameters (params, motives, minors, fields). We evaluate
+    // the RHS to a closure and then apply the substitution values one by one.
+    let mut result = interp.eval(&rhs, &LocalEnv::new())?;
     for v in subst {
-        local_env = local_env.push(v);
+        result = interp.apply(result, v)?;
     }
-
-    interp.eval(&rhs, &local_env)
+    Ok(result)
 }
 
 /// Convert a Nat value to a constructor representation.

@@ -2,6 +2,7 @@ use num_bigint::BigUint;
 use rslean_expr::Expr;
 use rslean_level::Level;
 use rslean_name::Name;
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::env::LocalEnv;
@@ -28,6 +29,8 @@ pub enum Value {
     },
     /// Array of values.
     Array(Arc<Vec<Value>>),
+    /// Mutable reference (for ST/Ref monad).
+    Ref(Arc<RefCell<Value>>),
     /// Erased term (type, proof — computationally irrelevant).
     Erased,
     /// An opaque kernel expression passed through (for elaborator bridge).

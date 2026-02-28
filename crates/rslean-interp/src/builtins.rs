@@ -2,6 +2,7 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 use rslean_name::Name;
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::error::{InterpError, InterpResult};
@@ -64,6 +65,48 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     // USize
     reg(map, "USize.ofNat", usize_of_nat);
     reg(map, "USize.toNat", usize_to_nat);
+
+    // UInt64
+    reg(map, "UInt64.ofNat", uint64_of_nat);
+    reg(map, "UInt64.toNat", uint64_to_nat);
+    reg(map, "UInt64.add", uint64_add);
+    reg(map, "UInt64.sub", uint64_sub);
+    reg(map, "UInt64.mul", uint64_mul);
+    reg(map, "UInt64.div", uint64_div);
+    reg(map, "UInt64.mod", uint64_mod);
+    reg(map, "UInt64.decEq", uint64_dec_eq);
+    reg(map, "UInt64.decLt", uint64_dec_lt);
+    reg(map, "UInt64.decLe", uint64_dec_le);
+
+    // UInt8 / UInt16
+    reg(map, "UInt8.ofNat", uint8_of_nat);
+    reg(map, "UInt8.toNat", uint8_to_nat);
+    reg(map, "UInt16.ofNat", uint16_of_nat);
+    reg(map, "UInt16.toNat", uint16_to_nat);
+
+    // Char
+    reg(map, "Char.ofNat", char_of_nat);
+    reg(map, "Char.toNat", char_to_nat);
+
+    // ST/Ref — mutable state
+    reg(map, "ST.Ref.mk", st_ref_mk);
+    reg(map, "ST.Ref.get", st_ref_get);
+    reg(map, "ST.Ref.set", st_ref_set);
+    reg(map, "ST.Ref.modifyGet", st_ref_modify_get);
+
+    // IO stubs
+    reg(map, "IO.println", io_println);
+    reg(map, "IO.print", io_print);
+    reg(map, "IO.eprintln", io_eprintln);
+
+    // String (additional)
+    reg(map, "String.data", string_data);
+    reg(map, "String.intercalate", string_intercalate);
+    reg(map, "String.isEmpty", string_is_empty);
+    reg(map, "String.get", string_get);
+    reg(map, "String.take", string_take);
+    reg(map, "String.drop", string_drop);
+    reg(map, "String.trimRight", string_trim_right);
 }
 
 fn reg(map: &mut FxHashMap<Name, BuiltinFn>, name: &str, f: BuiltinFn) {
@@ -503,4 +546,250 @@ fn make_decidable(b: bool) -> Value {
             fields: vec![Value::Erased], // proof is erased
         }
     }
+}
+
+// --------------- UInt64 builtins ---------------
+
+const UINT64_MOD: u128 = 1u128 << 64;
+
+fn uint64_of_nat(args: &[Value]) -> InterpResult<Value> {
+    let n = find_last_nat_val(args)?;
+    let n_u64: u64 = n.try_into().unwrap_or(u64::MAX);
+    Ok(Value::nat_small(n_u64))
+}
+
+fn uint64_to_nat(args: &[Value]) -> InterpResult<Value> {
+    let n = find_last_nat_val(args)?;
+    Ok(Value::nat(n.clone()))
+}
+
+fn uint64_add(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    let a_u64: u64 = a.try_into().unwrap_or(0);
+    let b_u64: u64 = b.try_into().unwrap_or(0);
+    let result = ((a_u64 as u128 + b_u64 as u128) % UINT64_MOD) as u64;
+    Ok(Value::nat_small(result))
+}
+
+fn uint64_sub(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    let a_u64: u64 = a.try_into().unwrap_or(0);
+    let b_u64: u64 = b.try_into().unwrap_or(0);
+    Ok(Value::nat_small(a_u64.wrapping_sub(b_u64)))
+}
+
+fn uint64_mul(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    let a_u64: u64 = a.try_into().unwrap_or(0);
+    let b_u64: u64 = b.try_into().unwrap_or(0);
+    let result = ((a_u64 as u128 * b_u64 as u128) % UINT64_MOD) as u64;
+    Ok(Value::nat_small(result))
+}
+
+fn uint64_div(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    let a_u64: u64 = a.try_into().unwrap_or(0);
+    let b_u64: u64 = b.try_into().unwrap_or(0);
+    if b_u64 == 0 { Ok(Value::nat_small(0)) } else { Ok(Value::nat_small(a_u64 / b_u64)) }
+}
+
+fn uint64_mod(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    let a_u64: u64 = a.try_into().unwrap_or(0);
+    let b_u64: u64 = b.try_into().unwrap_or(0);
+    if b_u64 == 0 { Ok(Value::nat_small(0)) } else { Ok(Value::nat_small(a_u64 % b_u64)) }
+}
+
+fn uint64_dec_eq(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    Ok(make_decidable(a == b))
+}
+
+fn uint64_dec_lt(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    Ok(make_decidable(a < b))
+}
+
+fn uint64_dec_le(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    Ok(make_decidable(a <= b))
+}
+
+// --------------- UInt8 / UInt16 builtins ---------------
+
+fn uint8_of_nat(args: &[Value]) -> InterpResult<Value> {
+    let n = find_last_nat_val(args)?;
+    let v: u64 = n.try_into().unwrap_or(0);
+    Ok(Value::nat_small(v % 256))
+}
+
+fn uint8_to_nat(args: &[Value]) -> InterpResult<Value> {
+    let n = find_last_nat_val(args)?;
+    Ok(Value::nat(n.clone()))
+}
+
+fn uint16_of_nat(args: &[Value]) -> InterpResult<Value> {
+    let n = find_last_nat_val(args)?;
+    let v: u64 = n.try_into().unwrap_or(0);
+    Ok(Value::nat_small(v % 65536))
+}
+
+fn uint16_to_nat(args: &[Value]) -> InterpResult<Value> {
+    let n = find_last_nat_val(args)?;
+    Ok(Value::nat(n.clone()))
+}
+
+// --------------- Char builtins ---------------
+
+fn char_of_nat(args: &[Value]) -> InterpResult<Value> {
+    let n = find_last_nat_val(args)?;
+    let code: u32 = n.try_into().unwrap_or(0);
+    // Valid Unicode scalar value, or replacement character
+    let ch = char::from_u32(code).unwrap_or('\u{FFFD}');
+    Ok(Value::nat_small(ch as u64))
+}
+
+fn char_to_nat(args: &[Value]) -> InterpResult<Value> {
+    let n = find_last_nat_val(args)?;
+    Ok(Value::nat(n.clone()))
+}
+
+// --------------- ST/Ref builtins ---------------
+
+fn st_ref_mk(args: &[Value]) -> InterpResult<Value> {
+    // ST.Ref.mk : {σ : Type} → {α : Type} → α → ST σ (Ref σ α)
+    // Find the non-Erased value to store in the ref
+    let initial = args
+        .iter()
+        .rev()
+        .find(|v| !matches!(v, Value::Erased))
+        .cloned()
+        .unwrap_or(Value::Erased);
+    Ok(Value::Ref(Arc::new(RefCell::new(initial))))
+}
+
+fn st_ref_get(args: &[Value]) -> InterpResult<Value> {
+    // ST.Ref.get : {σ : Type} → {α : Type} → Ref σ α → ST σ α
+    let r = find_ref(args)?;
+    Ok(r.borrow().clone())
+}
+
+fn st_ref_set(args: &[Value]) -> InterpResult<Value> {
+    // ST.Ref.set : {σ : Type} → {α : Type} → Ref σ α → α → ST σ PUnit
+    let r = find_ref(args)?;
+    let val = args
+        .iter()
+        .rev()
+        .find(|v| !matches!(v, Value::Erased | Value::Ref(_)))
+        .cloned()
+        .unwrap_or(Value::Erased);
+    *r.borrow_mut() = val;
+    Ok(Value::unit())
+}
+
+fn st_ref_modify_get(args: &[Value]) -> InterpResult<Value> {
+    // ST.Ref.modifyGet : {σ α β : Type} → Ref σ α → (α → β × α) → ST σ β
+    // This is complex — the second arg is a function. For now, stub it.
+    let _ = args;
+    Ok(Value::Erased)
+}
+
+fn find_ref(args: &[Value]) -> InterpResult<&RefCell<Value>> {
+    args.iter()
+        .find_map(|v| match v {
+            Value::Ref(r) => Some(r.as_ref()),
+            _ => None,
+        })
+        .ok_or_else(|| InterpError::BuiltinError("expected Ref arg".into()))
+}
+
+// --------------- IO stubs ---------------
+
+fn io_println(args: &[Value]) -> InterpResult<Value> {
+    if let Some(s) = args.iter().find_map(|v| v.as_str()) {
+        eprintln!("[IO.println] {}", s);
+    }
+    // Return EStateM.Result.ok PUnit.unit ()
+    Ok(Value::unit())
+}
+
+fn io_print(args: &[Value]) -> InterpResult<Value> {
+    if let Some(s) = args.iter().find_map(|v| v.as_str()) {
+        eprint!("[IO.print] {}", s);
+    }
+    Ok(Value::unit())
+}
+
+fn io_eprintln(args: &[Value]) -> InterpResult<Value> {
+    if let Some(s) = args.iter().find_map(|v| v.as_str()) {
+        eprintln!("[IO.eprintln] {}", s);
+    }
+    Ok(Value::unit())
+}
+
+// --------------- String (additional) builtins ---------------
+
+fn string_data(args: &[Value]) -> InterpResult<Value> {
+    // String.data : String → List Char
+    // Convert string to a List of Char (represented as Nat values)
+    let s = extract_str(args, 0)?;
+    let mut result = Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("List.nil"),
+        fields: vec![],
+    };
+    for ch in s.chars().rev() {
+        result = Value::Ctor {
+            tag: 1,
+            name: Name::from_str_parts("List.cons"),
+            fields: vec![Value::nat_small(ch as u64), result],
+        };
+    }
+    Ok(result)
+}
+
+fn string_intercalate(args: &[Value]) -> InterpResult<Value> {
+    // String.intercalate : String → List String → String
+    let strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
+    if strs.len() >= 2 {
+        // Simple case: just join with separator
+        Ok(Value::string(strs[1..].join(strs[0])))
+    } else {
+        Ok(Value::string(""))
+    }
+}
+
+fn string_is_empty(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    Ok(Value::bool_(s.is_empty()))
+}
+
+fn string_get(args: &[Value]) -> InterpResult<Value> {
+    // String.get : String → Pos → Char
+    let s = extract_str(args, 0)?;
+    let idx = find_last_nat(args)?;
+    let idx_usize: usize = idx.try_into().unwrap_or(0);
+    let ch = s.chars().nth(idx_usize).unwrap_or('\0');
+    Ok(Value::nat_small(ch as u64))
+}
+
+fn string_take(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    let n = find_last_nat(args)?;
+    let n_usize: usize = n.try_into().unwrap_or(0);
+    let result: String = s.chars().take(n_usize).collect();
+    Ok(Value::string(result.as_str()))
+}
+
+fn string_drop(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    let n = find_last_nat(args)?;
+    let n_usize: usize = n.try_into().unwrap_or(0);
+    let result: String = s.chars().skip(n_usize).collect();
+    Ok(Value::string(result.as_str()))
+}
+
+fn string_trim_right(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    Ok(Value::string(s.trim_end()))
 }

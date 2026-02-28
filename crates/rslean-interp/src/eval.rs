@@ -154,6 +154,10 @@ impl Interpreter {
             } => {
                 let total_arity = *num_params + *num_fields;
                 if total_arity == 0 {
+                    // Special-case Nat.zero
+                    if name == &Name::from_str_parts("Nat.zero") {
+                        return Ok(Value::nat_small(0));
+                    }
                     Ok(Value::Ctor {
                         tag: *ctor_idx,
                         name: name.clone(),
@@ -294,6 +298,15 @@ impl Interpreter {
                     .skip(num_params as usize)
                     .take(num_fields as usize)
                     .collect();
+                // Special-case Nat constructors to keep the Nat representation.
+                if name == Name::from_str_parts("Nat.zero") {
+                    return Ok(Value::nat_small(0));
+                }
+                if name == Name::from_str_parts("Nat.succ") {
+                    if let Some(Value::Nat(n)) = fields.first() {
+                        return Ok(Value::Nat(Arc::new(n.as_ref() + 1u32)));
+                    }
+                }
                 Ok(Value::Ctor { tag, name, fields })
             }
             FuncRef::RecursorFn(name, levels) => {
@@ -315,7 +328,10 @@ impl Interpreter {
                 })
             }
             Value::Erased => Ok(Value::Erased),
-            _ => Err(InterpError::NotACtor),
+            _ => Err(InterpError::TypeError(format!(
+                "projection {}.{} on non-constructor value: {:?}",
+                struct_name, idx, val
+            ))),
         }
     }
 }

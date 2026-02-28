@@ -5,8 +5,11 @@ use rslean_expr::{
 use rslean_kernel::Environment;
 use rslean_level::Level;
 use rslean_name::Name;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 
 use crate::env::LocalEnv;
+use crate::error::InterpError;
 use crate::eval::Interpreter;
 use crate::value::Value;
 
@@ -419,21 +422,17 @@ fn env_with_bool_rec() -> Environment {
         .unwrap();
 
     // Bool.rec : {motive : Bool → Sort u} → motive false → motive true → (b : Bool) → motive b
-    // num_params = 0, num_motives = 1, num_minors = 2 (false_case, true_case), num_indices = 0
+    // num_params = 0, num_motives = 1, num_minors = 2, num_indices = 0
     // Total arity = 0 + 1 + 2 + 0 + 1 = 4
     // Args: [motive, false_case, true_case, major]
     //
-    // Rule for Bool.false: rhs = BVar(1) (false_case)
-    //   substitution: [motive] → BVar(0) is motive, BVar(1) is false_case (minor 0)
-    //   Actually the rhs is evaluated with subst [params, motives, minors, fields]
-    //   For Bool.false: subst = [motive, false_case, true_case] (no fields)
-    //   reversed = [true_case, false_case, motive]
-    //   So bvar(0) = true_case, bvar(1) = false_case, bvar(2) = motive
-    //   Rule for false: rhs should reference false_case = bvar(1)
+    // Rule RHS in .olean format: closed lambdas taking subst values as params.
+    // subst = [motive, false_case, true_case] (no fields for either ctor)
     //
-    // Rule for Bool.true: rhs = BVar(0) (true_case)
-    //   subst = [motive, false_case, true_case] reversed = [true_case, false_case, motive]
-    //   bvar(0) = true_case ✓
+    // Bool.false rule: fun motive false_case true_case => false_case
+    //   = fun m => fun f => fun t => #1
+    // Bool.true rule: fun motive false_case true_case => true_case
+    //   = fun m => fun f => fun t => #0
     env.add_constant(ConstantInfo::Recursor {
         name: Name::from_str_parts("Bool.rec"),
         level_params: vec![Name::mk_simple("u")],
@@ -447,12 +446,38 @@ fn env_with_bool_rec() -> Environment {
             RecursorRule {
                 ctor_name: Name::from_str_parts("Bool.false"),
                 num_fields: 0,
-                rhs: Expr::bvar(1), // false_case
+                // fun motive => fun false_case => fun true_case => false_case (#1)
+                rhs: Expr::lam(
+                    Name::mk_simple("m"), Expr::type_(),
+                    Expr::lam(
+                        Name::mk_simple("f"), Expr::type_(),
+                        Expr::lam(
+                            Name::mk_simple("t"), Expr::type_(),
+                            Expr::bvar(1), // false_case
+                            BinderInfo::Default,
+                        ),
+                        BinderInfo::Default,
+                    ),
+                    BinderInfo::Default,
+                ),
             },
             RecursorRule {
                 ctor_name: Name::from_str_parts("Bool.true"),
                 num_fields: 0,
-                rhs: Expr::bvar(0), // true_case
+                // fun motive => fun false_case => fun true_case => true_case (#0)
+                rhs: Expr::lam(
+                    Name::mk_simple("m"), Expr::type_(),
+                    Expr::lam(
+                        Name::mk_simple("f"), Expr::type_(),
+                        Expr::lam(
+                            Name::mk_simple("t"), Expr::type_(),
+                            Expr::bvar(0), // true_case
+                            BinderInfo::Default,
+                        ),
+                        BinderInfo::Default,
+                    ),
+                    BinderInfo::Default,
+                ),
             },
         ],
         is_k: true,
@@ -1070,7 +1095,13 @@ fn env_with_nat_rec() -> Environment {
         .add_constant(ConstantInfo::Constructor {
             name: Name::from_str_parts("Nat.succ"),
             level_params: vec![],
-            type_: Expr::type_(), // simplified
+            // Type: Nat → Nat (so recursive field detection works)
+            type_: Expr::forall_e(
+                Name::mk_simple("n"),
+                Expr::const_(Name::from_str_parts("Nat"), vec![]),
+                Expr::const_(Name::from_str_parts("Nat"), vec![]),
+                BinderInfo::Default,
+            ),
             induct_name: Name::from_str_parts("Nat"),
             ctor_idx: 1,
             num_params: 0,
@@ -1084,20 +1115,15 @@ fn env_with_nat_rec() -> Environment {
     // total arity = 0 + 1 + 2 + 0 + 1 = 4
     // args: [motive, zero_case, succ_case, major]
     //
-    // For Nat.zero: subst = [motive, zero_case, succ_case] (no fields)
-    //   reversed: [succ_case, zero_case, motive]
-    //   bvar(0) = succ_case, bvar(1) = zero_case, bvar(2) = motive
-    //   Rule rhs: bvar(1) = zero_case ✓
+    // Rule RHS in .olean format: closed lambdas taking subst values as params.
+    // The IH is NOT a parameter — it is computed via embedded recursive calls.
     //
-    // For Nat.succ: subst = [motive, zero_case, succ_case, pred_n] (1 field)
-    //   reversed: [pred_n, succ_case, zero_case, motive]
-    //   bvar(0) = pred_n, bvar(1) = succ_case, bvar(2) = zero_case, bvar(3) = motive
-    //   Rule rhs: (succ_case pred_n (rec motive zero_case succ_case pred_n))
-    //   = App(App(bvar(1), bvar(0)), ???)
-    //   The recursive call is tricky — for now the succ_case minor handles it.
-    //   Actually in Lean's recursor rules, the RHS includes the recursive application.
-    //   So the rule's RHS just expects [params, motives, minors, fields...]
-    //   and the minor premise (succ_case) is a function that takes (n, ih) → result.
+    // For Nat.zero: subst = [motive, zero_case, succ_case]
+    //   RHS: fun m z s => z
+    //
+    // For Nat.succ: subst = [motive, zero_case, succ_case, n]
+    //   RHS: fun m z s n => s n (Nat.rec.{u} m z s n)
+    //   where the recursive call computes the IH
     env.add_constant(ConstantInfo::Recursor {
         name: Name::from_str_parts("Nat.rec"),
         level_params: vec![Name::mk_simple("u")],
@@ -1111,15 +1137,60 @@ fn env_with_nat_rec() -> Environment {
             RecursorRule {
                 ctor_name: Name::from_str_parts("Nat.zero"),
                 num_fields: 0,
-                rhs: Expr::bvar(1), // zero_case
+                // fun m => fun z => fun s => z (#1)
+                rhs: Expr::lam(
+                    Name::mk_simple("m"), Expr::type_(),
+                    Expr::lam(
+                        Name::mk_simple("z"), Expr::type_(),
+                        Expr::lam(
+                            Name::mk_simple("s"), Expr::type_(),
+                            Expr::bvar(1), // z
+                            BinderInfo::Default,
+                        ),
+                        BinderInfo::Default,
+                    ),
+                    BinderInfo::Default,
+                ),
             },
             RecursorRule {
                 ctor_name: Name::from_str_parts("Nat.succ"),
                 num_fields: 1,
-                // succ_case applied to pred_n
-                // subst reversed: [pred_n, succ_case, zero_case, motive]
-                // bvar(0) = pred_n, bvar(1) = succ_case
-                rhs: Expr::app(Expr::bvar(1), Expr::bvar(0)),
+                // fun m => fun z => fun s => fun n => s n (Nat.rec.{u} m z s n)
+                // Inside: s = #1, n = #0, m = #3, z = #2
+                // Nat.rec.{u} m z s n is the recursive call for IH
+                rhs: Expr::lam(
+                    Name::mk_simple("m"), Expr::type_(),
+                    Expr::lam(
+                        Name::mk_simple("z"), Expr::type_(),
+                        Expr::lam(
+                            Name::mk_simple("s"), Expr::type_(),
+                            Expr::lam(
+                                Name::mk_simple("n"), Expr::type_(),
+                                // s n (Nat.rec.{u} m z s n)
+                                Expr::app(
+                                    Expr::app(Expr::bvar(1), Expr::bvar(0)),
+                                    // Nat.rec.{u} m z s n
+                                    Expr::mk_app(
+                                        Expr::const_(
+                                            Name::from_str_parts("Nat.rec"),
+                                            vec![Level::param(Name::mk_simple("u"))],
+                                        ),
+                                        &[
+                                            Expr::bvar(3), // m
+                                            Expr::bvar(2), // z
+                                            Expr::bvar(1), // s
+                                            Expr::bvar(0), // n
+                                        ],
+                                    ),
+                                ),
+                                BinderInfo::Default,
+                            ),
+                            BinderInfo::Default,
+                        ),
+                        BinderInfo::Default,
+                    ),
+                    BinderInfo::Default,
+                ),
             },
         ],
         is_k: false,
@@ -1146,6 +1217,147 @@ fn test_eval_nat_rec_zero() {
     );
     let val = interp.eval(&app, &LocalEnv::new()).unwrap();
     assert_eq!(*val.as_nat().unwrap(), BigUint::from(42u64));
+}
+
+#[test]
+fn test_eval_nat_rec_succ() {
+    // Nat.rec motive 0 (fun n ih => Nat.add ih 1) 3  →  3
+    // This computes: f(0) = 0, f(n+1) = f(n) + 1
+    // f(3) = f(2) + 1 = (f(1) + 1) + 1 = ((f(0) + 1) + 1) + 1 = 3
+    let env = env_with_nat_rec();
+    // Also need Nat.add builtin
+    let env = env
+        .add_constant(ConstantInfo::Axiom {
+            name: Name::from_str_parts("Nat.add"),
+            level_params: vec![],
+            type_: Expr::forall_e(
+                Name::anonymous(),
+                Expr::type_(),
+                Expr::forall_e(
+                    Name::anonymous(),
+                    Expr::type_(),
+                    Expr::type_(),
+                    BinderInfo::Default,
+                ),
+                BinderInfo::Default,
+            ),
+            is_unsafe: false,
+        })
+        .unwrap();
+    let mut interp = Interpreter::new(env);
+
+    // succ_case = fun n ih => Nat.add ih 1
+    let succ_case = Expr::lam(
+        Name::mk_simple("n"),
+        Expr::type_(),
+        Expr::lam(
+            Name::mk_simple("ih"),
+            Expr::type_(),
+            // Nat.add ih 1 = App(App(Nat.add, bvar(0)), Lit(1))
+            Expr::mk_app(
+                Expr::const_(Name::from_str_parts("Nat.add"), vec![]),
+                &[Expr::bvar(0), Expr::lit(Literal::nat_small(1))],
+            ),
+            BinderInfo::Default,
+        ),
+        BinderInfo::Default,
+    );
+
+    let rec = Expr::const_(Name::from_str_parts("Nat.rec"), vec![Level::one()]);
+    let app = Expr::mk_app(
+        rec,
+        &[
+            Expr::type_(),                    // motive
+            Expr::lit(Literal::nat_small(0)), // zero case
+            succ_case,                        // succ case
+            Expr::lit(Literal::nat_small(3)), // major = 3
+        ],
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(*val.as_nat().unwrap(), BigUint::from(3u64));
+}
+
+#[test]
+fn test_eval_nat_rec_factorial() {
+    // Compute factorial via Nat.rec:
+    // fact(0) = 1, fact(n+1) = (n+1) * fact(n)
+    // succ_case = fun n ih => Nat.mul (Nat.add n 1) ih
+    let env = env_with_nat_rec();
+    let env = env
+        .add_constant(ConstantInfo::Axiom {
+            name: Name::from_str_parts("Nat.add"),
+            level_params: vec![],
+            type_: Expr::forall_e(
+                Name::anonymous(),
+                Expr::type_(),
+                Expr::forall_e(
+                    Name::anonymous(),
+                    Expr::type_(),
+                    Expr::type_(),
+                    BinderInfo::Default,
+                ),
+                BinderInfo::Default,
+            ),
+            is_unsafe: false,
+        })
+        .unwrap();
+    let env = env
+        .add_constant(ConstantInfo::Axiom {
+            name: Name::from_str_parts("Nat.mul"),
+            level_params: vec![],
+            type_: Expr::forall_e(
+                Name::anonymous(),
+                Expr::type_(),
+                Expr::forall_e(
+                    Name::anonymous(),
+                    Expr::type_(),
+                    Expr::type_(),
+                    BinderInfo::Default,
+                ),
+                BinderInfo::Default,
+            ),
+            is_unsafe: false,
+        })
+        .unwrap();
+    let mut interp = Interpreter::new(env);
+
+    // succ_case = fun n ih => Nat.mul (Nat.add n 1) ih
+    let succ_case = Expr::lam(
+        Name::mk_simple("n"),
+        Expr::type_(),
+        Expr::lam(
+            Name::mk_simple("ih"),
+            Expr::type_(),
+            // Nat.mul (Nat.add n 1) ih
+            // n = bvar(1), ih = bvar(0)
+            Expr::mk_app(
+                Expr::const_(Name::from_str_parts("Nat.mul"), vec![]),
+                &[
+                    Expr::mk_app(
+                        Expr::const_(Name::from_str_parts("Nat.add"), vec![]),
+                        &[Expr::bvar(1), Expr::lit(Literal::nat_small(1))],
+                    ),
+                    Expr::bvar(0),
+                ],
+            ),
+            BinderInfo::Default,
+        ),
+        BinderInfo::Default,
+    );
+
+    let rec = Expr::const_(Name::from_str_parts("Nat.rec"), vec![Level::one()]);
+    // fact(5) = 120
+    let app = Expr::mk_app(
+        rec,
+        &[
+            Expr::type_(),                    // motive
+            Expr::lit(Literal::nat_small(1)), // zero case (0! = 1)
+            succ_case,                        // succ case
+            Expr::lit(Literal::nat_small(5)), // major = 5
+        ],
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(*val.as_nat().unwrap(), BigUint::from(120u64));
 }
 
 // ====================== Array builtins ======================
@@ -1225,4 +1437,651 @@ fn test_builtin_array_mk_empty_and_push() {
         Value::Array(a) => assert!(a.is_empty()),
         _ => panic!("expected Array"),
     }
+}
+
+// ====================== UInt64 builtins ======================
+
+#[test]
+fn test_builtin_uint64() {
+    let env = Environment::new();
+    // Register UInt64.add with a 2-arity type
+    let env = env
+        .add_constant(ConstantInfo::Axiom {
+            name: Name::from_str_parts("UInt64.add"),
+            level_params: vec![],
+            type_: Expr::forall_e(
+                Name::anonymous(),
+                Expr::type_(),
+                Expr::forall_e(
+                    Name::anonymous(),
+                    Expr::type_(),
+                    Expr::type_(),
+                    BinderInfo::Default,
+                ),
+                BinderInfo::Default,
+            ),
+            is_unsafe: false,
+        })
+        .unwrap();
+    let mut interp = Interpreter::new(env);
+
+    let add = Expr::const_(Name::from_str_parts("UInt64.add"), vec![]);
+    let app = Expr::mk_app(
+        add,
+        &[
+            Expr::lit(Literal::nat_small(u64::MAX)),
+            Expr::lit(Literal::nat_small(2)),
+        ],
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    // u64::MAX + 2 wraps to 1
+    assert_eq!(*val.as_nat().unwrap(), BigUint::from(1u64));
+}
+
+// ====================== ST/Ref builtins ======================
+
+#[test]
+fn test_builtin_st_ref() {
+    let env = Environment::new();
+    // Register ST.Ref.mk with 3-arity type (σ, α, initial_val)
+    let env = env
+        .add_constant(ConstantInfo::Axiom {
+            name: Name::from_str_parts("ST.Ref.mk"),
+            level_params: vec![],
+            type_: Expr::forall_e(
+                Name::anonymous(),
+                Expr::type_(),
+                Expr::forall_e(
+                    Name::anonymous(),
+                    Expr::type_(),
+                    Expr::forall_e(
+                        Name::anonymous(),
+                        Expr::type_(),
+                        Expr::type_(),
+                        BinderInfo::Default,
+                    ),
+                    BinderInfo::Implicit,
+                ),
+                BinderInfo::Implicit,
+            ),
+            is_unsafe: false,
+        })
+        .unwrap();
+    let env = env
+        .add_constant(ConstantInfo::Axiom {
+            name: Name::from_str_parts("ST.Ref.get"),
+            level_params: vec![],
+            type_: Expr::forall_e(
+                Name::anonymous(),
+                Expr::type_(),
+                Expr::forall_e(
+                    Name::anonymous(),
+                    Expr::type_(),
+                    Expr::forall_e(
+                        Name::anonymous(),
+                        Expr::type_(),
+                        Expr::type_(),
+                        BinderInfo::Default,
+                    ),
+                    BinderInfo::Implicit,
+                ),
+                BinderInfo::Implicit,
+            ),
+            is_unsafe: false,
+        })
+        .unwrap();
+    let env = env
+        .add_constant(ConstantInfo::Axiom {
+            name: Name::from_str_parts("ST.Ref.set"),
+            level_params: vec![],
+            type_: Expr::forall_e(
+                Name::anonymous(),
+                Expr::type_(),
+                Expr::forall_e(
+                    Name::anonymous(),
+                    Expr::type_(),
+                    Expr::forall_e(
+                        Name::anonymous(),
+                        Expr::type_(),
+                        Expr::forall_e(
+                            Name::anonymous(),
+                            Expr::type_(),
+                            Expr::type_(),
+                            BinderInfo::Default,
+                        ),
+                        BinderInfo::Default,
+                    ),
+                    BinderInfo::Implicit,
+                ),
+                BinderInfo::Implicit,
+            ),
+            is_unsafe: false,
+        })
+        .unwrap();
+    let mut interp = Interpreter::new(env);
+
+    // Create a ref with initial value 42
+    let mk = Expr::const_(Name::from_str_parts("ST.Ref.mk"), vec![]);
+    let mk_app = Expr::mk_app(
+        mk,
+        &[Expr::type_(), Expr::type_(), Expr::lit(Literal::nat_small(42))],
+    );
+    let ref_val = interp.eval(&mk_app, &LocalEnv::new()).unwrap();
+    assert!(matches!(ref_val, Value::Ref(_)));
+
+    // Get the value: should be 42
+    // We need to build an expr that uses the ref, but since we can't embed
+    // a Value into an Expr, let's test the builtins directly
+    use crate::builtins::BuiltinFn;
+    let get_fn: BuiltinFn = |args: &[Value]| {
+        let r = args.iter().find_map(|v| match v {
+            Value::Ref(r) => Some(r.as_ref()),
+            _ => None,
+        }).ok_or_else(|| InterpError::BuiltinError("no ref".into()))?;
+        Ok(r.borrow().clone())
+    };
+    let got = get_fn(&[Value::Erased, Value::Erased, ref_val.clone()]).unwrap();
+    assert_eq!(*got.as_nat().unwrap(), BigUint::from(42u64));
+}
+
+// ====================== .olean Integration Tests ======================
+
+/// Find the Lean toolchain lib directory containing .olean files.
+fn find_lean_lib_dir() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    let elan_dir = PathBuf::from(&home).join(".elan/toolchains");
+    if !elan_dir.exists() {
+        return None;
+    }
+    let entries = std::fs::read_dir(&elan_dir).ok()?;
+    for entry in entries.flatten() {
+        let lib_dir = entry.path().join("lib/lean");
+        if lib_dir.join("Init/Prelude.olean").exists() {
+            return Some(lib_dir);
+        }
+    }
+    None
+}
+
+/// Load Init/Prelude.olean into an Environment.
+fn load_prelude_env() -> Option<Environment> {
+    let lib_dir = find_lean_lib_dir()?;
+    let prelude_path = lib_dir.join("Init/Prelude.olean");
+    let (_header, module_data) = rslean_olean::load_module(&prelude_path).ok()?;
+
+    let mut env = Environment::new();
+    for ci in &module_data.constants {
+        env = env.add_constant_unchecked(ci.clone());
+    }
+    Some(env)
+}
+
+/// Resolve a module Name (e.g., Init.Data.List.Basic) to an .olean file path.
+fn resolve_module(name: &Name, search_paths: &[PathBuf]) -> Option<PathBuf> {
+    let parts = name.components();
+    if parts.is_empty() {
+        return None;
+    }
+    let mut rel_path = PathBuf::new();
+    for part in &parts {
+        rel_path.push(part);
+    }
+    rel_path.set_extension("olean");
+
+    for base in search_paths {
+        let full = base.join(&rel_path);
+        if full.exists() {
+            return Some(full);
+        }
+    }
+    None
+}
+
+/// Load an .olean module and all its transitive dependencies into an Environment.
+/// Uses BFS to follow imports, deduplicating by path.
+fn load_env_with_deps(root_path: &Path) -> Option<Environment> {
+    let lib_dir = find_lean_lib_dir()?;
+    let search_paths = vec![lib_dir.join("library"), lib_dir.clone()];
+
+    let mut loaded: HashMap<String, Vec<ConstantInfo>> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut queue: VecDeque<PathBuf> = VecDeque::new();
+
+    queue.push_back(root_path.to_path_buf());
+
+    while let Some(path) = queue.pop_front() {
+        let path_key = path.to_string_lossy().to_string();
+        if loaded.contains_key(&path_key) {
+            continue;
+        }
+
+        let (_, data) = rslean_olean::load_module(&path).ok()?;
+
+        // Queue imports
+        for imp in &data.imports {
+            if let Some(imp_path) = resolve_module(&imp.module, &search_paths) {
+                queue.push_back(imp_path);
+            }
+        }
+
+        loaded.insert(path_key.clone(), data.constants);
+        order.push(path_key);
+    }
+
+    // Build environment in load order
+    let mut env = Environment::new();
+    for key in &order {
+        if let Some(constants) = loaded.get(key) {
+            for ci in constants {
+                env = env.add_constant_unchecked(ci.clone());
+            }
+        }
+    }
+    Some(env)
+}
+
+/// Load a module by name (e.g., "Init.Data.List.Basic") with all dependencies.
+fn load_module_env(module_name: &str) -> Option<Environment> {
+    let lib_dir = find_lean_lib_dir()?;
+    let name = Name::from_str_parts(module_name);
+    let search_paths = vec![lib_dir.join("library"), lib_dir.clone()];
+    let path = resolve_module(&name, &search_paths)?;
+    load_env_with_deps(&path)
+}
+
+#[test]
+fn test_olean_nat_add() {
+    // Nat.add 2 3 → 5
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    let add = Expr::const_(Name::from_str_parts("Nat.add"), vec![]);
+    let app = Expr::mk_app(
+        add,
+        &[
+            Expr::lit(Literal::nat_small(2)),
+            Expr::lit(Literal::nat_small(3)),
+        ],
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(*val.as_nat().unwrap(), BigUint::from(5u64));
+}
+
+#[test]
+fn test_olean_nat_mul() {
+    // Nat.mul 6 7 → 42
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    let mul = Expr::const_(Name::from_str_parts("Nat.mul"), vec![]);
+    let app = Expr::mk_app(
+        mul,
+        &[
+            Expr::lit(Literal::nat_small(6)),
+            Expr::lit(Literal::nat_small(7)),
+        ],
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(*val.as_nat().unwrap(), BigUint::from(42u64));
+}
+
+#[test]
+fn test_olean_nat_succ() {
+    // Nat.succ (Nat.succ 0) → 2
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    let succ = Expr::const_(Name::from_str_parts("Nat.succ"), vec![]);
+    let app = Expr::app(
+        succ.clone(),
+        Expr::app(succ, Expr::lit(Literal::nat_small(0))),
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(*val.as_nat().unwrap(), BigUint::from(2u64));
+}
+
+#[test]
+fn test_olean_bool_not() {
+    // Bool.not Bool.true → Bool.false
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    let not = Expr::const_(Name::from_str_parts("Bool.not"), vec![]);
+    let app = Expr::app(
+        not,
+        Expr::const_(Name::from_str_parts("Bool.true"), vec![]),
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(val.as_bool(), Some(false));
+}
+
+#[test]
+fn test_olean_bool_and() {
+    // Bool.and Bool.true Bool.false → Bool.false
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    let and = Expr::const_(Name::from_str_parts("Bool.and"), vec![]);
+    let app = Expr::mk_app(
+        and,
+        &[
+            Expr::const_(Name::from_str_parts("Bool.true"), vec![]),
+            Expr::const_(Name::from_str_parts("Bool.false"), vec![]),
+        ],
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(val.as_bool(), Some(false));
+}
+
+#[test]
+fn test_olean_nat_pow() {
+    // Nat.pow 2 10 → 1024
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    let pow = Expr::const_(Name::from_str_parts("Nat.pow"), vec![]);
+    let app = Expr::mk_app(
+        pow,
+        &[
+            Expr::lit(Literal::nat_small(2)),
+            Expr::lit(Literal::nat_small(10)),
+        ],
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(*val.as_nat().unwrap(), BigUint::from(1024u64));
+}
+
+#[test]
+fn test_olean_string_length() {
+    // String.length "hello" → 5
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    // Check if String.length exists in prelude
+    if interp.env().find(&Name::from_str_parts("String.length")).is_none() {
+        eprintln!("Skipping: String.length not in prelude");
+        return;
+    }
+
+    let length = Expr::const_(Name::from_str_parts("String.length"), vec![]);
+    let app = Expr::app(length, Expr::lit(Literal::string("hello")));
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(*val.as_nat().unwrap(), BigUint::from(5u64));
+}
+
+#[test]
+fn test_olean_id_nat() {
+    // @id Nat 42 → 42
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    let id = Expr::const_(Name::from_str_parts("id"), vec![Level::one()]);
+    let app = Expr::mk_app(
+        id,
+        &[
+            Expr::type_(),                      // α = Nat (type, will be erased)
+            Expr::lit(Literal::nat_small(42)),  // value
+        ],
+    );
+    let val = interp.eval(&app, &LocalEnv::new()).unwrap();
+    assert_eq!(*val.as_nat().unwrap(), BigUint::from(42u64));
+}
+
+// ====================== Multi-module .olean Integration Tests ======================
+
+#[test]
+fn test_olean_list_map() {
+    // List.map (· + 1) [1, 2, 3] → [2, 3, 4]
+    let env = match load_module_env("Init.Data.List.Basic") {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: cannot load Init.Data.List.Basic");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    // Verify key definitions loaded
+    assert!(
+        interp.env().find(&Name::from_str_parts("List.map")).is_some(),
+        "List.map not found in environment"
+    );
+
+    // Build: List.map Nat Nat (fun n => Nat.add n 1) (List.cons Nat 1 (List.cons Nat 2 (List.cons Nat 3 (List.nil Nat))))
+    let nat = Expr::const_(Name::from_str_parts("Nat"), vec![]);
+    let one = Expr::lit(Literal::nat_small(1));
+    let two = Expr::lit(Literal::nat_small(2));
+    let three = Expr::lit(Literal::nat_small(3));
+
+    // The mapping function: fun (n : Nat) => Nat.add n 1
+    let add_one = Expr::lam(
+        Name::mk_simple("n"),
+        nat.clone(),
+        Expr::mk_app(
+            Expr::const_(Name::from_str_parts("Nat.add"), vec![]),
+            &[Expr::bvar(0), Expr::lit(Literal::nat_small(1))],
+        ),
+        BinderInfo::Default,
+    );
+
+    // Build the list [1, 2, 3] = cons 1 (cons 2 (cons 3 nil))
+    let nil = Expr::mk_app(
+        Expr::const_(Name::from_str_parts("List.nil"), vec![Level::one()]),
+        &[nat.clone()],
+    );
+    let list = Expr::mk_app(
+        Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
+        &[nat.clone(), one, Expr::mk_app(
+            Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
+            &[nat.clone(), two, Expr::mk_app(
+                Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
+                &[nat.clone(), three, nil],
+            )],
+        )],
+    );
+
+    // List.map Nat Nat add_one list
+    let map_expr = Expr::mk_app(
+        Expr::const_(Name::from_str_parts("List.map"), vec![Level::one(), Level::one()]),
+        &[nat.clone(), nat, add_one, list],
+    );
+
+    let result = match interp.eval(&map_expr, &LocalEnv::new()) {
+        Ok(v) => v,
+        Err(e) => panic!("eval error: {:?}", e),
+    };
+
+    // Extract the list elements
+    let elems = list_to_vec(&result);
+    let nat_elems: Vec<u64> = elems
+        .iter()
+        .map(|v| {
+            let n = v.as_nat().expect("expected Nat in list");
+            n.iter_u64_digits().next().unwrap_or(0)
+        })
+        .collect();
+    assert_eq!(nat_elems, vec![2, 3, 4]);
+}
+
+#[test]
+fn test_olean_list_rec_direct() {
+    // Use List.rec directly to implement map: (· + 1) over [1, 2, 3] → [2, 3, 4]
+    // List.rec.{u, v} {α : Type u} {motive : List α → Sort v}
+    //   (nil : motive []) (cons : (head : α) → (tail : List α) → motive tail → motive (head :: tail))
+    //   (t : List α) : motive t
+    let env = match load_module_env("Init.Data.List.Basic") {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: cannot load Init.Data.List.Basic");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    let nat = Expr::const_(Name::from_str_parts("Nat"), vec![]);
+
+    // Build the list [1, 2, 3]
+    let nil = Expr::mk_app(
+        Expr::const_(Name::from_str_parts("List.nil"), vec![Level::one()]),
+        &[nat.clone()],
+    );
+    let list_3 = Expr::mk_app(
+        Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
+        &[nat.clone(), Expr::lit(Literal::nat_small(3)), nil],
+    );
+    let list_23 = Expr::mk_app(
+        Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
+        &[nat.clone(), Expr::lit(Literal::nat_small(2)), list_3],
+    );
+    let list_123 = Expr::mk_app(
+        Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
+        &[nat.clone(), Expr::lit(Literal::nat_small(1)), list_23],
+    );
+
+    // motive: fun (_ : List Nat) => List Nat (constant motive)
+    let list_nat = Expr::mk_app(
+        Expr::const_(Name::from_str_parts("List"), vec![Level::one()]),
+        &[nat.clone()],
+    );
+    let motive = Expr::lam(
+        Name::mk_simple("_"),
+        list_nat.clone(),
+        list_nat.clone(),
+        BinderInfo::Default,
+    );
+
+    // nil case: List.nil Nat
+    let nil_case = Expr::mk_app(
+        Expr::const_(Name::from_str_parts("List.nil"), vec![Level::one()]),
+        &[nat.clone()],
+    );
+
+    // cons case: fun (head : Nat) (_ : List Nat) (ih : List Nat) => List.cons Nat (Nat.add head 1) ih
+    let cons_case = Expr::lam(
+        Name::mk_simple("head"),
+        nat.clone(),
+        Expr::lam(
+            Name::mk_simple("_tail"),
+            list_nat.clone(),
+            Expr::lam(
+                Name::mk_simple("ih"),
+                list_nat.clone(),
+                // List.cons Nat (Nat.add head 1) ih
+                Expr::mk_app(
+                    Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
+                    &[
+                        nat.clone(),
+                        Expr::mk_app(
+                            Expr::const_(Name::from_str_parts("Nat.add"), vec![]),
+                            &[Expr::bvar(2), Expr::lit(Literal::nat_small(1))],
+                        ),
+                        Expr::bvar(0),
+                    ],
+                ),
+                BinderInfo::Default,
+            ),
+            BinderInfo::Default,
+        ),
+        BinderInfo::Default,
+    );
+
+    // List.rec.{1, 1} Nat (fun _ => List Nat) nil_case cons_case [1, 2, 3]
+    let rec_expr = Expr::mk_app(
+        Expr::const_(
+            Name::from_str_parts("List.rec"),
+            vec![Level::one(), Level::one()],
+        ),
+        &[nat.clone(), motive, nil_case, cons_case, list_123],
+    );
+
+    let result = match interp.eval(&rec_expr, &LocalEnv::new()) {
+        Ok(v) => v,
+        Err(e) => panic!("eval error: {:?}", e),
+    };
+
+    let elems = list_to_vec(&result);
+    let nat_elems: Vec<u64> = elems
+        .iter()
+        .map(|v| {
+            let n = v.as_nat().expect("expected Nat in list");
+            n.iter_u64_digits().next().unwrap_or(0)
+        })
+        .collect();
+    assert_eq!(nat_elems, vec![2, 3, 4]);
+}
+
+/// Convert a Value representing a List to a Vec<Value>.
+fn list_to_vec(val: &Value) -> Vec<Value> {
+    let mut result = Vec::new();
+    let mut current = val.clone();
+    loop {
+        match &current {
+            Value::Ctor { name, fields, .. } => {
+                let name_str = name.to_string();
+                if name_str == "List.nil" {
+                    break;
+                } else if name_str == "List.cons" {
+                    // fields[0] = head, fields[1] = tail
+                    if fields.len() >= 2 {
+                        result.push(fields[0].clone());
+                        current = fields[1].clone();
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    result
 }

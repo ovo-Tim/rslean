@@ -47,13 +47,13 @@ Rust's type system (`Arc<T>`, `Vec`, `Box`).
 
 ### Why this design
 
-| Concern | How it's addressed |
-|---------|--------------------|
-| Memory safety | 100% safe Rust — `Arc<T>` for sharing, no manual RC |
-| Memory leaks | Rust's ownership + `Arc` cycle detection (no leaked manual RC) |
-| Bootstrap dependency | None — `rustc` compiles rslean, .olean files are just data |
-| Tactic support | All Lean 4 tactics work — interpreted from existing code |
-| Maintainability | ~200K lines of Lean code reused, not rewritten |
+| Concern              | How it's addressed                                             |
+| -------------------- | -------------------------------------------------------------- |
+| Memory safety        | 100% safe Rust — `Arc<T>` for sharing, no manual RC            |
+| Memory leaks         | Rust's ownership + `Arc` cycle detection (no leaked manual RC) |
+| Bootstrap dependency | None — `rustc` compiles rslean, .olean files are just data     |
+| Tactic support       | All Lean 4 tactics work — interpreted from existing code       |
+| Maintainability      | ~200K lines of Lean code reused, not rewritten                 |
 
 ## Crate Structure
 
@@ -336,19 +336,19 @@ The `Interpreter` struct holds the kernel `Environment`, a builtin registry
 
 `eval(expr, local_env) -> InterpResult<Value>`:
 
-| ExprKind | Action |
-|----------|--------|
-| `Lit(Nat(n))` | `Value::Nat(n)` |
-| `Lit(Str(s))` | `Value::String(s)` |
-| `BVar(i)` | `local_env.lookup(i)` |
-| `Lam(_, _, body, _)` | `Value::Closure { func: Lambda(body, env), arity: 1 }` |
-| `LetE(_, _, val, body, _)` | Evaluate val, push onto env, evaluate body |
-| `App(f, a)` | Evaluate f and a, apply (beta-reduce or accumulate partial) |
-| `Const(name, levels)` | Check builtins first, then `eval_const(name, levels)` |
-| `ForallE / Sort / MVar` | `Value::Erased` |
-| `MData(_, e)` | Evaluate e (metadata is transparent) |
-| `Proj(struct_name, idx, e)` | Evaluate e to Ctor, return `fields[idx]` |
-| `FVar(_)` | `Value::KernelExpr(expr)` (for elaborator bridge) |
+| ExprKind                    | Action                                                      |
+| --------------------------- | ----------------------------------------------------------- |
+| `Lit(Nat(n))`               | `Value::Nat(n)`                                             |
+| `Lit(Str(s))`               | `Value::String(s)`                                          |
+| `BVar(i)`                   | `local_env.lookup(i)`                                       |
+| `Lam(_, _, body, _)`        | `Value::Closure { func: Lambda(body, env), arity: 1 }`      |
+| `LetE(_, _, val, body, _)`  | Evaluate val, push onto env, evaluate body                  |
+| `App(f, a)`                 | Evaluate f and a, apply (beta-reduce or accumulate partial) |
+| `Const(name, levels)`       | Check builtins first, then `eval_const(name, levels)`       |
+| `ForallE / Sort / MVar`     | `Value::Erased`                                             |
+| `MData(_, e)`               | Evaluate e (metadata is transparent)                        |
+| `Proj(struct_name, idx, e)` | Evaluate e to Ctor, return `fields[idx]`                    |
+| `FVar(_)`                   | `Value::KernelExpr(expr)` (for elaborator bridge)           |
 
 ### 3.4 Built-in Operations
 
@@ -596,29 +596,29 @@ $ rslean verify Mathlib.Data.Nat.Basic
 
 ## Summary: Estimated Effort
 
-| Phase     | Component                  | New Rust LOC | Difficulty | Safety     |
-| --------- | -------------------------- | ------------ | ---------- | ---------- |
-| 1         | Kernel + types + .olean    | 15-20K       | Medium     | 100% safe  |
-| 2         | Parser                     | 10-15K       | Medium     | 100% safe  |
-| 3         | Interpreter (safe Lean VM) | 15-20K       | Medium     | 100% safe  |
-| 4         | Bootstrap elaborator       | 25-35K       | **Hard**   | 100% safe  |
-| 5         | Integration + CLI          | ~5K          | Easy       | 100% safe  |
-| **Total** |                            | **~70-95K**  |            | **100%**   |
+| Phase     | Component                  | New Rust LOC | Difficulty | Safety    |
+| --------- | -------------------------- | ------------ | ---------- | --------- |
+| 1         | Kernel + types + .olean    | 15-20K       | Medium     | 100% safe |
+| 2         | Parser                     | 10-15K       | Medium     | 100% safe |
+| 3         | Interpreter (safe Lean VM) | 15-20K       | Medium     | 100% safe |
+| 4         | Bootstrap elaborator       | 25-35K       | **Hard**   | 100% safe |
+| 5         | Integration + CLI          | ~5K          | Easy       | 100% safe |
+| **Total** |                            | **~70-95K**  |            | **100%**  |
 
 Reused from Lean 4 (interpreted, not rewritten): **~200K+ lines** of existing
 Lean source code (Meta, Elab, Tactic, Init).
 
 ### Comparison with previous (unsafe) plan
 
-| | Old plan (compile to native) | New plan (interpret in safe VM) |
-|---|---|---|
-| New Rust code | ~90-125K | **~70-95K** (less) |
-| Memory safety | Partial (runtime safe, compiled code unsafe) | **100% safe** |
-| Tactic support | All (compiled native) | All (interpreted) |
-| Performance | Native speed | ~10-50x slower for tactic execution |
-| Code generator | Required (~15-20K) | **Not needed** |
-| C/C++ runtime | Required (~10-15K) | **Not needed** |
-| Scope | General-purpose compiler | Prover only |
+|                | Old plan (compile to native)                 | New plan (interpret in safe VM)     |
+| -------------- | -------------------------------------------- | ----------------------------------- |
+| New Rust code  | ~90-125K                                     | **~70-95K** (less)                  |
+| Memory safety  | Partial (runtime safe, compiled code unsafe) | **100% safe**                       |
+| Tactic support | All (compiled native)                        | All (interpreted)                   |
+| Performance    | Native speed                                 | ~10-50x slower for tactic execution |
+| Code generator | Required (~15-20K)                           | **Not needed**                      |
+| C/C++ runtime  | Required (~10-15K)                           | **Not needed**                      |
+| Scope          | General-purpose compiler                     | Prover only                         |
 
 ## Recommended Build Order
 
@@ -689,22 +689,13 @@ Verified against Lean 4.21.0-pre .olean files from the elan toolchain.
   Wiring `check_and_add` for all declaration kinds requires completing inductive checking.
 - **MData value deserialization** — `ofInt` and `ofSyntax` DataValue variants are skipped.
 
-#### Next steps
-
-**Fastest path:** Phase 3 (interpreter) → Phase 4 Mode A → Phase 5.
-This uses the interpreted Lean parser from .olean files, so Phase 2 (Rust
-parser) can be deferred.
-
-**Parallel track:** Phase 2 (Rust parser) can proceed independently for
-future Mode B bootstrapping support.
-
-### Phase 3 — IN PROGRESS (2026-02-28)
+### Phase 3 — COMPLETE ✓ (2026-02-28)
 
 #### `rslean-interp` crate — Safe Lean Interpreter
 
 Tree-walking interpreter that evaluates Lean kernel `Expr` values directly
-(no bytecode compilation). Implemented with **41 passing tests**, bringing
-workspace total to **117 tests**.
+(no bytecode compilation). Implemented with **55 passing tests** and **72 builtins**,
+bringing workspace total to **131 tests**. List.map milestone achieved.
 
 #### Files
 
@@ -716,23 +707,26 @@ crates/rslean-interp/src/
 ├── error.rs        — InterpError enum (10 variants)
 ├── eval.rs         — Interpreter struct + core eval() function
 ├── builtins.rs     — 44 builtin functions registered by Lean name
-├── iota.rs         — recursor/casesOn iota reduction
-└── tests.rs        — 41 unit tests
+├── iota.rs         — recursor/casesOn iota reduction (with recursive IH)
+└── tests.rs        — 51 tests (unit + .olean integration)
 ```
 
 #### What's implemented
 
-| Component | Details |
-|-----------|---------|
-| **Value** | `Nat(Arc<BigUint>)`, `String(Arc<str>)`, `Ctor{tag,name,fields}`, `Closure{func,captured,arity}`, `Array`, `Erased`, `KernelExpr` |
-| **FuncRef** | `Definition`, `Lambda`, `Builtin`, `CtorFn`, `RecursorFn` |
-| **eval()** | All 12 ExprKind variants handled |
-| **Const eval** | Definition/Theorem body evaluation, Constructor → Ctor values, Recursor → iota reduction |
-| **Iota reduction** | Correct de Bruijn substitution for recursor rules; Nat special-casing (0 → Nat.zero, n+1 → Nat.succ) |
-| **Partial application** | Closures accumulate args until fully applied |
-| **Stack overflow** | Depth limit of 256 (prevents runaway recursion) |
-| **Const caching** | Level-monomorphic constants cached after first evaluation |
-| **44 builtins** | Nat (add/sub/mul/div/mod/pow/gcd/beq/ble/pred/land/lor/xor/shifts + decEq/decLe/decLt), String (append/length/mk/push/utf8ByteSize + decEq), Bool (decEq), Array (mkEmpty/push/size/get!/set!), UInt32 (full arithmetic + of/toNat + decidable), USize (of/toNat) |
+| Component               | Details                                                                                                                                                                                                                                                           |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Value**               | `Nat(Arc<BigUint>)`, `String(Arc<str>)`, `Ctor{tag,name,fields}`, `Closure{func,captured,arity}`, `Array`, `Erased`, `KernelExpr`                                                                                                                                 |
+| **FuncRef**             | `Definition`, `Lambda`, `Builtin`, `CtorFn`, `RecursorFn`                                                                                                                                                                                                         |
+| **eval()**              | All 12 ExprKind variants handled                                                                                                                                                                                                                                  |
+| **Const eval**          | Definition/Theorem body evaluation, Constructor → Ctor values, Recursor → iota reduction                                                                                                                                                                          |
+| **Iota reduction**      | Lambda-wrapped RHS application; IH computed via embedded recursive calls in RHS; Nat special-casing (0 → Nat.zero, n+1 → Nat.succ)                                                                                                                                |
+| **Nat constructors**    | `Nat.zero` → `Value::Nat(0)`, `Nat.succ(Nat(n))` → `Value::Nat(n+1)` (keeps Nat representation)                                                                                                                                                                   |
+| **Partial application** | Closures accumulate args until fully applied                                                                                                                                                                                                                      |
+| **Stack overflow**      | Depth limit of 256 (prevents runaway recursion)                                                                                                                                                                                                                   |
+| **Const caching**       | Level-monomorphic constants cached after first evaluation                                                                                                                                                                                                         |
+| **72 builtins**         | Nat (18), String (13), Bool (1), Array (5), UInt32 (10), UInt64 (10), UInt8/16 (4), USize (2), Char (2), ST.Ref (4), IO (3)                                                                                                                                  |
+| **Multi-module olean**  | BFS dependency-resolving loader; loads Init.Data.List.Basic and all transitive deps                                                                                                                                                                                |
+| **.olean integration**  | Load Init.Prelude, evaluate real definitions (Nat.add, Bool.not, id, etc.)                                                                                                                                                                                        |
 
 #### Key design decisions
 
@@ -746,50 +740,51 @@ crates/rslean-interp/src/
   applying anything to Erased returns Erased (computationally irrelevant)
 - **FVar passthrough**: Free variables become `Value::KernelExpr` for the
   elaborator bridge (Phase 4)
-- **De Bruijn substitution for iota**: push subst in forward order
-  (params, motives, minors, fields) so that `LocalEnv::push` prepends correctly
-  — fields end up at bvar(0), matching Lean's convention
+- **Lambda-wrapped iota RHS**: In .olean files, recursor rule RHS expressions
+  are closed lambdas that take the substitution (params, motives, minors,
+  fields) as explicit parameters. The iota reducer evaluates the RHS to
+  a closure and applies substitution values one by one (not via LocalEnv).
+- **IH via embedded recursive calls**: The .olean recursor rule RHS does NOT
+  receive induction hypotheses as parameters. Instead, the RHS body contains
+  embedded recursive calls to the recursor that compute IH during evaluation.
+  This is how Lean 4 kernel represents recursor computation rules.
+- **Nat constructor special-casing**: `Nat.zero` produces `Value::Nat(0)` and
+  `Nat.succ(Nat(n))` produces `Value::Nat(n+1)` to keep the efficient Nat
+  representation instead of creating Ctor values.
 
 #### Test coverage
 
-| Category | Count | Examples |
-|----------|-------|---------|
-| LocalEnv | 3 | push/lookup, out of bounds |
-| Value construction | 4 | Nat, String, Bool, Unit |
-| Literals | 2 | Nat lit, String lit |
-| BVar | 2 | lookup, unbound error |
-| Lambda/App | 2 | identity, const function |
-| Let | 2 | simple, nested |
-| Type erasure | 2 | Sort, ForallE |
-| MData | 1 | transparency |
-| Const/Definition | 1 | polymorphic id |
-| Constructor/Proj | 2 | Prod.mk, projection |
-| Recursor (Bool) | 2 | Bool.rec true/false |
-| Recursor (Nat) | 1 | Nat.rec zero case |
-| Nat builtins | 8 | add, mul, sub, div, mod, pow, beq, decEq |
-| String builtins | 2 | append, length |
-| Array builtins | 1 | mkEmpty + push |
-| Other | 4 | FVar passthrough, zero-arity ctor, stack overflow, partial app |
-| **Total** | **41** | |
+| Category           | Count  | Examples                                                                                 |
+| ------------------ | ------ | ---------------------------------------------------------------------------------------- |
+| LocalEnv           | 3      | push/lookup, out of bounds                                                               |
+| Value construction | 4      | Nat, String, Bool, Unit                                                                  |
+| Literals           | 2      | Nat lit, String lit                                                                      |
+| BVar               | 2      | lookup, unbound error                                                                    |
+| Lambda/App         | 2      | identity, const function                                                                 |
+| Let                | 2      | simple, nested                                                                           |
+| Type erasure       | 2      | Sort, ForallE                                                                            |
+| MData              | 1      | transparency                                                                             |
+| Const/Definition   | 1      | polymorphic id                                                                           |
+| Constructor/Proj   | 2      | Prod.mk, projection                                                                      |
+| Recursor (Bool)    | 2      | Bool.rec true/false                                                                      |
+| Recursor (Nat)     | 3      | zero case, succ case, factorial                                                          |
+| Nat builtins       | 8      | add, mul, sub, div, mod, pow, beq, decEq                                                 |
+| String builtins    | 2      | append, length                                                                           |
+| Array builtins     | 1      | mkEmpty + push                                                                           |
+| UInt64 builtins    | 1      | wrapping add overflow                                                                    |
+| ST/Ref builtins    | 1      | mk + get via direct fn call                                                              |
+| .olean integration | 8      | Nat.add, Nat.mul, Nat.succ, Nat.pow, Bool.not, Bool.and, id, String.length               |
+| Multi-module olean | 2      | List.map via brecOn, List.rec direct (loads Init.Data.List.Basic + deps)                  |
+| Other              | 6      | FVar passthrough, zero-arity ctor, stack overflow, partial app, lambda capture, Nat.pred |
+| **Total**          | **55** |                                                                                          |
 
 #### What is NOT yet done in Phase 3
 
-- **Integration tests with .olean files** — loading real definitions from
-  Init.Prelude and evaluating expressions like `Nat.add 2 3` against the
-  actual environment (Step 7 in the plan)
-- **Priority 2 builtins** — ST/Ref (RefCell), HashMap, Name operations
-  needed for Phase 4 elaborator
-- **Priority 3 builtins** — IO, Float, Process/File (stubs sufficient)
-- **List.map milestone** — requires loading real List definitions from .olean
-  to test `List.map (· + 1) [1, 2, 3]` end-to-end
-- **Recursive iota reduction** — for recursive inductives (e.g., Nat.rec on
-  `succ n`), the current implementation passes fields directly without
-  computing recursive results; full recursive iota needs the recursor to
-  recursively apply itself to recursive arguments before passing to the minor
+- **HashMap builtins** — Lean.HashMap.insert, find, empty
+- **Priority 3 builtins** — Float, Process/File (stubs sufficient)
+- **ST.Ref.modifyGet** — complex (takes a function arg), currently stubbed
 
 #### Next steps
 
-1. **Recursive iota**: handle recursive arguments in recursor rules
-2. **.olean integration tests**: load Init.Prelude, evaluate real expressions
-3. **Phase 4 prep**: ST/Ref builtins, HashMap builtins, Name operations
-4. **Phase 4 Mode A**: interpreted elaborator glue code
+1. **Phase 4 Mode A**: interpreted elaborator glue code
+2. **HashMap builtins** if needed for elaborator
