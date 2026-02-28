@@ -207,19 +207,114 @@ impl Interpreter {
     }
 
     /// Compute the arity of a constant by counting pi-binders in its type.
+    /// Delta-reduces type aliases (ST, EST, EIO, IO, etc.) to expose hidden binders
+    /// from monadic return types like `ST σ α = Void σ → ST.Out σ α`.
     fn compute_arity_from_type(&self, name: &Name) -> u32 {
         if let Some(info) = self.env.find(name) {
             let mut ty = info.type_().clone();
             let mut arity = 0u32;
-            while let ExprKind::ForallE(_, _, body, _) = ty.kind() {
-                arity += 1;
-                ty = body.clone();
+            let mut reduction_fuel = 8u32;
+
+            loop {
+                // Count ForallE binders
+                while let ExprKind::ForallE(_, _, body, _) = ty.kind() {
+                    arity += 1;
+                    ty = body.clone();
+                }
+
+                // Try to delta-reduce if the result type is an application of a
+                // known type alias that hides additional binders.
+                if reduction_fuel == 0 {
+                    break;
+                }
+                reduction_fuel -= 1;
+
+                if let Some(head_name) = self.get_app_head_const(&ty) {
+                    if self.is_function_type_alias(&head_name) {
+                        if let Some(reduced) = self.try_delta_reduce_type(&ty) {
+                            ty = reduced;
+                            continue;
+                        }
+                    }
+                }
+                break;
             }
+
             if arity == 0 { 1 } else { arity }
         } else {
             // Fallback: arity 1
             1
         }
+    }
+
+    /// Get the head constant name from a (possibly nested) application.
+    fn get_app_head_const(&self, expr: &Expr) -> Option<Name> {
+        let mut e = expr;
+        loop {
+            match e.kind() {
+                ExprKind::App(f, _) => e = f,
+                ExprKind::Const(name, _) => return Some(name.clone()),
+                _ => return None,
+            }
+        }
+    }
+
+    /// Check if a name is a type alias that may hide function binders.
+    /// These are types like ST, EST, EIO, BaseIO, IO that expand to
+    /// something containing `→` (ForallE).
+    fn is_function_type_alias(&self, name: &Name) -> bool {
+        // Known Lean 4 monadic type aliases that expand to functions
+        static ALIASES: &[&str] = &[
+            "ST", "EST", "EIO", "BaseIO", "IO",
+            "ST'", "EST'",
+            "StateM", "ReaderT", "StateT", "ExceptT",
+        ];
+        let name_str = name.to_string();
+        ALIASES.iter().any(|a| name_str == *a)
+    }
+
+    /// Try to delta-reduce a type expression by unfolding the head constant's definition.
+    /// Returns the reduced type with arguments substituted, or None if it can't be reduced.
+    fn try_delta_reduce_type(&self, expr: &Expr) -> Option<Expr> {
+        // Collect application arguments
+        let mut args = Vec::new();
+        let mut e = expr;
+        while let ExprKind::App(f, a) = e.kind() {
+            args.push(a.clone());
+            e = f;
+        }
+        args.reverse();
+
+        let (name, levels) = match e.kind() {
+            ExprKind::Const(name, levels) => (name, levels),
+            _ => return None,
+        };
+
+        // Look up the definition
+        let info = self.env.find(name)?;
+        let (level_params, value) = match info {
+            ConstantInfo::Definition { level_params, value, .. } => (level_params, value),
+            _ => return None,
+        };
+
+        // Instantiate universe parameters
+        let mut body = if !level_params.is_empty() && !levels.is_empty() {
+            value.instantiate_level_params(level_params, levels)
+        } else {
+            value.clone()
+        };
+
+        // Apply arguments by stripping lambdas
+        for arg in &args {
+            match body.kind() {
+                ExprKind::Lam(_, _, lam_body, _) => {
+                    body = lam_body.instantiate(std::slice::from_ref(arg));
+                }
+                _ => return None,
+            }
+        }
+
+        Some(body)
     }
 
     /// Apply a function value to an argument.

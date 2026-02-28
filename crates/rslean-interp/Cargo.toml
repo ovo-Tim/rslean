@@ -8,12 +8,10 @@ rslean-name = { workspace = true }
 rslean-level = { workspace = true }
 rslean-expr = { workspace = true }
 rslean-kernel = { workspace = true }
+rslean-olean = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 num-integer = { workspace = true }
 rustc-hash = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-
-[dev-dependencies]
-rslean-olean = { workspace = true }

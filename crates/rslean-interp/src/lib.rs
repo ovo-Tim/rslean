@@ -1,8 +1,11 @@
+#![allow(clippy::arc_with_non_send_sync)]
+
 pub mod builtins;
 pub mod env;
 pub mod error;
 pub mod eval;
 pub mod iota;
+pub mod loader;
 pub mod value;
 
 #[cfg(test)]

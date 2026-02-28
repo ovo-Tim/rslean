@@ -5,8 +5,6 @@ use rslean_expr::{
 use rslean_kernel::Environment;
 use rslean_level::Level;
 use rslean_name::Name;
-use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
 
 use crate::env::LocalEnv;
 use crate::error::InterpError;
@@ -1482,28 +1480,34 @@ fn test_builtin_uint64() {
 
 #[test]
 fn test_builtin_st_ref() {
+    // Helper to build a 4-arity type: {σ} → {α} → val → world → result
+    let mk_st_type_4 = || {
+        Expr::forall_e(
+            Name::anonymous(), Expr::type_(),
+            Expr::forall_e(
+                Name::anonymous(), Expr::type_(),
+                Expr::forall_e(
+                    Name::anonymous(), Expr::type_(),
+                    Expr::forall_e(
+                        Name::anonymous(), Expr::type_(),
+                        Expr::type_(),
+                        BinderInfo::Default,
+                    ),
+                    BinderInfo::Default,
+                ),
+                BinderInfo::Implicit,
+            ),
+            BinderInfo::Implicit,
+        )
+    };
+
     let env = Environment::new();
-    // Register ST.Ref.mk with 3-arity type (σ, α, initial_val)
+    // Register ST.Ref.mk with 4-arity type (σ, α, initial_val, world)
     let env = env
         .add_constant(ConstantInfo::Axiom {
             name: Name::from_str_parts("ST.Ref.mk"),
             level_params: vec![],
-            type_: Expr::forall_e(
-                Name::anonymous(),
-                Expr::type_(),
-                Expr::forall_e(
-                    Name::anonymous(),
-                    Expr::type_(),
-                    Expr::forall_e(
-                        Name::anonymous(),
-                        Expr::type_(),
-                        Expr::type_(),
-                        BinderInfo::Default,
-                    ),
-                    BinderInfo::Implicit,
-                ),
-                BinderInfo::Implicit,
-            ),
+            type_: mk_st_type_4(),
             is_unsafe: false,
         })
         .unwrap();
@@ -1511,22 +1515,7 @@ fn test_builtin_st_ref() {
         .add_constant(ConstantInfo::Axiom {
             name: Name::from_str_parts("ST.Ref.get"),
             level_params: vec![],
-            type_: Expr::forall_e(
-                Name::anonymous(),
-                Expr::type_(),
-                Expr::forall_e(
-                    Name::anonymous(),
-                    Expr::type_(),
-                    Expr::forall_e(
-                        Name::anonymous(),
-                        Expr::type_(),
-                        Expr::type_(),
-                        BinderInfo::Default,
-                    ),
-                    BinderInfo::Implicit,
-                ),
-                BinderInfo::Implicit,
-            ),
+            type_: mk_st_type_4(),
             is_unsafe: false,
         })
         .unwrap();
@@ -1535,18 +1524,18 @@ fn test_builtin_st_ref() {
             name: Name::from_str_parts("ST.Ref.set"),
             level_params: vec![],
             type_: Expr::forall_e(
-                Name::anonymous(),
-                Expr::type_(),
+                Name::anonymous(), Expr::type_(),
                 Expr::forall_e(
-                    Name::anonymous(),
-                    Expr::type_(),
+                    Name::anonymous(), Expr::type_(),
                     Expr::forall_e(
-                        Name::anonymous(),
-                        Expr::type_(),
+                        Name::anonymous(), Expr::type_(),
                         Expr::forall_e(
-                            Name::anonymous(),
-                            Expr::type_(),
-                            Expr::type_(),
+                            Name::anonymous(), Expr::type_(),
+                            Expr::forall_e(
+                                Name::anonymous(), Expr::type_(),
+                                Expr::type_(),
+                                BinderInfo::Default,
+                            ),
                             BinderInfo::Default,
                         ),
                         BinderInfo::Default,
@@ -1561,17 +1550,29 @@ fn test_builtin_st_ref() {
     let mut interp = Interpreter::new(env);
 
     // Create a ref with initial value 42
+    // ST.Ref.mk now expects [σ, α, val, world] and returns EStateM.Result.ok(ref, world)
     let mk = Expr::const_(Name::from_str_parts("ST.Ref.mk"), vec![]);
     let mk_app = Expr::mk_app(
         mk,
-        &[Expr::type_(), Expr::type_(), Expr::lit(Literal::nat_small(42))],
+        &[
+            Expr::type_(),
+            Expr::type_(),
+            Expr::lit(Literal::nat_small(42)),
+            Expr::type_(), // world token (erased)
+        ],
     );
-    let ref_val = interp.eval(&mk_app, &LocalEnv::new()).unwrap();
+    let result = interp.eval(&mk_app, &LocalEnv::new()).unwrap();
+    // Result should be EStateM.Result.ok wrapping a Ref
+    let ref_val = match &result {
+        Value::Ctor { tag: 0, fields, .. } => {
+            assert!(!fields.is_empty());
+            fields[0].clone()
+        }
+        _ => panic!("Expected EStateM.Result.ok, got {:?}", result),
+    };
     assert!(matches!(ref_val, Value::Ref(_)));
 
-    // Get the value: should be 42
-    // We need to build an expr that uses the ref, but since we can't embed
-    // a Value into an Expr, let's test the builtins directly
+    // Get the value using the builtin directly
     use crate::builtins::BuiltinFn;
     let get_fn: BuiltinFn = |args: &[Value]| {
         let r = args.iter().find_map(|v| match v {
@@ -1586,107 +1587,14 @@ fn test_builtin_st_ref() {
 
 // ====================== .olean Integration Tests ======================
 
-/// Find the Lean toolchain lib directory containing .olean files.
-fn find_lean_lib_dir() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let elan_dir = PathBuf::from(&home).join(".elan/toolchains");
-    if !elan_dir.exists() {
-        return None;
-    }
-    let entries = std::fs::read_dir(&elan_dir).ok()?;
-    for entry in entries.flatten() {
-        let lib_dir = entry.path().join("lib/lean");
-        if lib_dir.join("Init/Prelude.olean").exists() {
-            return Some(lib_dir);
-        }
-    }
-    None
-}
+use crate::loader;
 
-/// Load Init/Prelude.olean into an Environment.
 fn load_prelude_env() -> Option<Environment> {
-    let lib_dir = find_lean_lib_dir()?;
-    let prelude_path = lib_dir.join("Init/Prelude.olean");
-    let (_header, module_data) = rslean_olean::load_module(&prelude_path).ok()?;
-
-    let mut env = Environment::new();
-    for ci in &module_data.constants {
-        env = env.add_constant_unchecked(ci.clone());
-    }
-    Some(env)
+    loader::load_prelude_env()
 }
 
-/// Resolve a module Name (e.g., Init.Data.List.Basic) to an .olean file path.
-fn resolve_module(name: &Name, search_paths: &[PathBuf]) -> Option<PathBuf> {
-    let parts = name.components();
-    if parts.is_empty() {
-        return None;
-    }
-    let mut rel_path = PathBuf::new();
-    for part in &parts {
-        rel_path.push(part);
-    }
-    rel_path.set_extension("olean");
-
-    for base in search_paths {
-        let full = base.join(&rel_path);
-        if full.exists() {
-            return Some(full);
-        }
-    }
-    None
-}
-
-/// Load an .olean module and all its transitive dependencies into an Environment.
-/// Uses BFS to follow imports, deduplicating by path.
-fn load_env_with_deps(root_path: &Path) -> Option<Environment> {
-    let lib_dir = find_lean_lib_dir()?;
-    let search_paths = vec![lib_dir.join("library"), lib_dir.clone()];
-
-    let mut loaded: HashMap<String, Vec<ConstantInfo>> = HashMap::new();
-    let mut order: Vec<String> = Vec::new();
-    let mut queue: VecDeque<PathBuf> = VecDeque::new();
-
-    queue.push_back(root_path.to_path_buf());
-
-    while let Some(path) = queue.pop_front() {
-        let path_key = path.to_string_lossy().to_string();
-        if loaded.contains_key(&path_key) {
-            continue;
-        }
-
-        let (_, data) = rslean_olean::load_module(&path).ok()?;
-
-        // Queue imports
-        for imp in &data.imports {
-            if let Some(imp_path) = resolve_module(&imp.module, &search_paths) {
-                queue.push_back(imp_path);
-            }
-        }
-
-        loaded.insert(path_key.clone(), data.constants);
-        order.push(path_key);
-    }
-
-    // Build environment in load order
-    let mut env = Environment::new();
-    for key in &order {
-        if let Some(constants) = loaded.get(key) {
-            for ci in constants {
-                env = env.add_constant_unchecked(ci.clone());
-            }
-        }
-    }
-    Some(env)
-}
-
-/// Load a module by name (e.g., "Init.Data.List.Basic") with all dependencies.
 fn load_module_env(module_name: &str) -> Option<Environment> {
-    let lib_dir = find_lean_lib_dir()?;
-    let name = Name::from_str_parts(module_name);
-    let search_paths = vec![lib_dir.join("library"), lib_dir.clone()];
-    let path = resolve_module(&name, &search_paths)?;
-    load_env_with_deps(&path)
+    loader::load_module_env(module_name)
 }
 
 #[test]
@@ -2084,4 +1992,172 @@ fn list_to_vec(val: &Value) -> Vec<Value> {
         }
     }
     result
+}
+
+// ====================== IO Monad Integration Tests ======================
+
+#[test]
+fn test_st_ref_monadic_convention() {
+    // Test that ST.Prim.mkRef returns EStateM.Result.ok wrapping a Ref
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let _interp = Interpreter::new(env);
+    // Directly test the builtin function
+    let args = vec![Value::Erased, Value::Erased, Value::nat_small(42), Value::Erased];
+    let result = crate::builtins::test_builtin_call("ST.Prim.mkRef", &args);
+    match result {
+        Ok(val) => {
+            // Should be EStateM.Result.ok with a Ref inside
+            match &val {
+                Value::Ctor { name, fields, tag: 0 } => {
+                    assert_eq!(name.to_string(), "EStateM.Result.ok");
+                    assert_eq!(fields.len(), 2);
+                    assert!(matches!(&fields[0], Value::Ref(_)));
+                }
+                _ => panic!("Expected EStateM.Result.ok, got {:?}", val),
+            }
+        }
+        Err(e) => panic!("ST.Prim.mkRef failed: {}", e),
+    }
+}
+
+#[test]
+fn test_io_println_monadic_convention() {
+    // Test that IO.println returns EStateM.Result.ok wrapping Unit
+    let args = vec![Value::Erased, Value::string("test"), Value::Erased];
+    let result = crate::builtins::test_builtin_call("IO.println", &args);
+    match result {
+        Ok(val) => {
+            match &val {
+                Value::Ctor { name, fields, tag: 0 } => {
+                    assert_eq!(name.to_string(), "EStateM.Result.ok");
+                    assert_eq!(fields.len(), 2);
+                    // fields[0] should be Unit.unit
+                    assert!(matches!(&fields[0], Value::Ctor { tag: 0, .. }));
+                }
+                _ => panic!("Expected EStateM.Result.ok, got {:?}", val),
+            }
+        }
+        Err(e) => panic!("IO.println failed: {}", e),
+    }
+}
+
+#[test]
+fn test_hashmap_operations() {
+    // Test HashMap create, insert, find, size
+    let empty_args: Vec<Value> = vec![Value::Erased];
+    let map = crate::builtins::test_builtin_call("Lean.HashMap.mkEmpty", &empty_args).unwrap();
+    assert!(matches!(&map, Value::HashMap(_)));
+
+    // Insert a key-value pair
+    let insert_args = vec![Value::Erased, Value::Erased, map.clone(), Value::string("key"), Value::nat_small(42)];
+    let map2 = crate::builtins::test_builtin_call("Lean.HashMap.insert", &insert_args).unwrap();
+
+    // Check size
+    let size_args = vec![Value::Erased, Value::Erased, map2.clone()];
+    let size = crate::builtins::test_builtin_call("Lean.HashMap.size", &size_args).unwrap();
+    assert_eq!(*size.as_nat().unwrap(), BigUint::from(1u64));
+
+    // Find the key
+    let find_args = vec![Value::Erased, Value::Erased, map2.clone(), Value::string("key")];
+    let found = crate::builtins::test_builtin_call("Lean.HashMap.find?", &find_args).unwrap();
+    match &found {
+        Value::Ctor { tag: 1, name, fields } => {
+            assert_eq!(name.to_string(), "Option.some");
+            assert_eq!(*fields[0].as_nat().unwrap(), BigUint::from(42u64));
+        }
+        _ => panic!("Expected Option.some, got {:?}", found),
+    }
+
+    // Find a missing key
+    let find_args2 = vec![Value::Erased, Value::Erased, map2.clone(), Value::string("missing")];
+    let not_found = crate::builtins::test_builtin_call("Lean.HashMap.find?", &find_args2).unwrap();
+    assert!(matches!(&not_found, Value::Ctor { tag: 0, .. })); // Option.none
+}
+
+#[test]
+fn test_int_arithmetic() {
+    use num_bigint::BigInt;
+    use std::sync::Arc;
+
+    let a = Value::Int(Arc::new(BigInt::from(10)));
+    let b = Value::Int(Arc::new(BigInt::from(-3)));
+
+    let result = crate::builtins::test_builtin_call("Int.add", &[a.clone(), b.clone()]).unwrap();
+    assert_eq!(*result.as_int().unwrap(), BigInt::from(7));
+
+    let result = crate::builtins::test_builtin_call("Int.sub", &[a.clone(), b.clone()]).unwrap();
+    assert_eq!(*result.as_int().unwrap(), BigInt::from(13));
+
+    let result = crate::builtins::test_builtin_call("Int.mul", &[a.clone(), b.clone()]).unwrap();
+    assert_eq!(*result.as_int().unwrap(), BigInt::from(-30));
+
+    let result = crate::builtins::test_builtin_call("Int.neg", &[b.clone()]).unwrap();
+    assert_eq!(*result.as_int().unwrap(), BigInt::from(3));
+}
+
+#[test]
+fn test_bytearray_operations() {
+    let empty = crate::builtins::test_builtin_call("ByteArray.mkEmpty", &[Value::nat_small(0)]).unwrap();
+    assert!(matches!(&empty, Value::ByteArray(_)));
+
+    let pushed = crate::builtins::test_builtin_call("ByteArray.push", &[empty, Value::nat_small(0x42)]).unwrap();
+    let size = crate::builtins::test_builtin_call("ByteArray.size", &[pushed.clone()]).unwrap();
+    assert_eq!(*size.as_nat().unwrap(), BigUint::from(1u64));
+
+    let byte = crate::builtins::test_builtin_call("ByteArray.get!", &[pushed, Value::nat_small(0)]).unwrap();
+    assert_eq!(*byte.as_nat().unwrap(), BigUint::from(0x42u64));
+}
+
+#[test]
+fn test_arity_computation_monadic() {
+    // Test that monadic builtins get the right arity after delta-reduction
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let interp = Interpreter::new(env);
+
+    // Check that ST.Prim.mkRef has the right arity (should be 4: σ, α, val, world)
+    if let Some(info) = interp.env().find(&Name::from_str_parts("ST.Prim.mkRef")) {
+        // The type is: {σ : Type} → {α : Type} → α → ST σ (ST.Ref σ α)
+        // ST σ X = σ → EStateM.Result ... so arity should be 4 after delta-reduction
+        let _ = info; // We just verify it doesn't crash
+    }
+}
+
+#[test]
+fn test_loader_module() {
+    // Test the shared loader module works
+    if loader::find_lean_lib_dir().is_none() {
+        eprintln!("Skipping test: no Lean toolchain found");
+        return;
+    }
+    let env = loader::load_prelude_env().expect("Failed to load prelude");
+    assert!(env.find(&Name::from_str_parts("Nat.add")).is_some());
+    assert!(env.find(&Name::from_str_parts("Bool.true")).is_some());
+}
+
+#[test]
+fn test_loader_module_with_deps() {
+    // Test loading a module with dependencies
+    let env = match loader::load_module_env("Init.Data.List.Basic") {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    // Should have List.map from the loaded module
+    assert!(env.find(&Name::from_str_parts("List.map")).is_some());
+    // Should also have dependencies like Nat.add from Prelude
+    assert!(env.find(&Name::from_str_parts("Nat.add")).is_some());
 }

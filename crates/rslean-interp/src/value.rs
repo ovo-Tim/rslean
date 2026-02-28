@@ -1,9 +1,14 @@
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint};
 use rslean_expr::Expr;
+use rslean_kernel::Environment;
 use rslean_level::Level;
 use rslean_name::Name;
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::sync::Arc;
+
+/// HashMap bucket storage type used by `Value::HashMap`.
+pub type HashMapBuckets = FxHashMap<u64, Vec<(Value, Value)>>;
 
 use crate::env::LocalEnv;
 
@@ -12,6 +17,8 @@ use crate::env::LocalEnv;
 pub enum Value {
     /// Natural number (arbitrary precision).
     Nat(Arc<BigUint>),
+    /// Signed integer (arbitrary precision).
+    Int(Arc<BigInt>),
     /// String value.
     String(Arc<str>),
     /// Constructor application: `Ctor { tag, name, fields }`.
@@ -29,8 +36,14 @@ pub enum Value {
     },
     /// Array of values.
     Array(Arc<Vec<Value>>),
+    /// Byte array.
+    ByteArray(Arc<Vec<u8>>),
     /// Mutable reference (for ST/Ref monad).
     Ref(Arc<RefCell<Value>>),
+    /// Hash map (opaque, for Lean.HashMap).
+    HashMap(Arc<RefCell<HashMapBuckets>>),
+    /// An opaque kernel Environment (for elaborator bridge).
+    Environment(Arc<Environment>),
     /// Erased term (type, proof — computationally irrelevant).
     Erased,
     /// An opaque kernel expression passed through (for elaborator bridge).
@@ -112,8 +125,45 @@ impl Value {
         }
     }
 
+    /// Try to interpret this value as a signed integer.
+    pub fn as_int(&self) -> Option<&BigInt> {
+        match self {
+            Value::Int(n) => Some(n),
+            // Nat can be viewed as non-negative Int
+            Value::Nat(_) => None,
+            _ => None,
+        }
+    }
+
+    /// Convert to BigInt, handling both Nat and Int representations.
+    pub fn to_bigint(&self) -> Option<BigInt> {
+        match self {
+            Value::Int(n) => Some(n.as_ref().clone()),
+            Value::Nat(n) => Some(BigInt::from(n.as_ref().clone())),
+            _ => None,
+        }
+    }
+
     /// Check if this is a constructor with the given name.
     pub fn is_ctor_named(&self, name: &str) -> bool {
         matches!(self, Value::Ctor { name: n, .. } if n == &Name::from_str_parts(name))
+    }
+
+    /// Create an Option.some value.
+    pub fn some(val: Value) -> Self {
+        Value::Ctor {
+            tag: 1,
+            name: Name::from_str_parts("Option.some"),
+            fields: vec![val],
+        }
+    }
+
+    /// Create an Option.none value.
+    pub fn none() -> Self {
+        Value::Ctor {
+            tag: 0,
+            name: Name::from_str_parts("Option.none"),
+            fields: vec![],
+        }
     }
 }

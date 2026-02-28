@@ -683,9 +683,9 @@ crates/rslean-interp/src/
 ├── env.rs          — LocalEnv (de Bruijn indexed variable stack)
 ├── error.rs        — InterpError enum (10 variants)
 ├── eval.rs         — Interpreter struct + core eval() function
-├── builtins.rs     — 44 builtin functions registered by Lean name
+├── builtins.rs     — 72 builtin functions registered by Lean name
 ├── iota.rs         — recursor/casesOn iota reduction (with recursive IH)
-└── tests.rs        — 51 tests (unit + .olean integration)
+└── tests.rs        — 55 tests (unit + .olean integration)
 ```
 
 #### What's implemented
@@ -729,39 +729,101 @@ crates/rslean-interp/src/
   `Nat.succ(Nat(n))` produces `Value::Nat(n+1)` to keep the efficient Nat
   representation instead of creating Ctor values.
 
-#### Test coverage
+---
 
-| Category           | Count  | Examples                                                                                 |
-| ------------------ | ------ | ---------------------------------------------------------------------------------------- |
-| LocalEnv           | 3      | push/lookup, out of bounds                                                               |
-| Value construction | 4      | Nat, String, Bool, Unit                                                                  |
-| Literals           | 2      | Nat lit, String lit                                                                      |
-| BVar               | 2      | lookup, unbound error                                                                    |
-| Lambda/App         | 2      | identity, const function                                                                 |
-| Let                | 2      | simple, nested                                                                           |
-| Type erasure       | 2      | Sort, ForallE                                                                            |
-| MData              | 1      | transparency                                                                             |
-| Const/Definition   | 1      | polymorphic id                                                                           |
-| Constructor/Proj   | 2      | Prod.mk, projection                                                                      |
-| Recursor (Bool)    | 2      | Bool.rec true/false                                                                      |
-| Recursor (Nat)     | 3      | zero case, succ case, factorial                                                          |
-| Nat builtins       | 8      | add, mul, sub, div, mod, pow, beq, decEq                                                 |
-| String builtins    | 2      | append, length                                                                           |
-| Array builtins     | 1      | mkEmpty + push                                                                           |
-| UInt64 builtins    | 1      | wrapping add overflow                                                                    |
-| ST/Ref builtins    | 1      | mk + get via direct fn call                                                              |
-| .olean integration | 8      | Nat.add, Nat.mul, Nat.succ, Nat.pow, Bool.not, Bool.and, id, String.length               |
-| Multi-module olean | 2      | List.map via brecOn, List.rec direct (loads Init.Data.List.Basic + deps)                 |
-| Other              | 6      | FVar passthrough, zero-arity ctor, stack overflow, partial app, lambda capture, Nat.pred |
-| **Total**          | **55** |                                                                                          |
+### Phase 4.1 — IO Runtime Foundation — COMPLETE ✓ (2026-02-28)
 
-#### What is NOT yet done in Phase 3
+Pre-requisite work for the interpreted elaborator: fixing monadic calling
+convention, implementing missing builtins, and creating a shared loader.
 
-- **HashMap builtins** — Lean.HashMap.insert, find, empty
-- **Priority 3 builtins** — Float, Process/File (stubs sufficient)
-- **ST.Ref.modifyGet** — complex (takes a function arg), currently stubbed
+**63 interp tests, 139 workspace total** (up from 55/131).
 
-#### Next steps
+#### Changes
 
-1. **Phase 4 Mode A**: interpreted elaborator glue code
-2. **HashMap builtins** if needed for elaborator
+**New file: `loader.rs`** — shared multi-module .olean loader
+
+Extracted from `tests.rs` into a proper public module with:
+- `find_lean_lib_dir()` — locates elan toolchain
+- `resolve_module(name, search_paths)` — Name → .olean path
+- `load_env_with_deps(root_path, search_paths)` — BFS transitive loader
+- `load_prelude_env()` — convenience: loads Init.Prelude
+- `load_module_env(module_name)` — convenience: loads by name with deps
+
+**`value.rs`** — 5 new Value variants
+
+| Variant | Purpose |
+| ------- | ------- |
+| `Int(Arc<BigInt>)` | Signed arbitrary-precision integers |
+| `ByteArray(Arc<Vec<u8>>)` | Lean ByteArray type |
+| `HashMap(Arc<RefCell<HashMapBuckets>>)` | Lean.HashMap (opaque bucket map) |
+| `Environment(Arc<Environment>)` | Kernel Environment for elaborator bridge |
+| (updated) `Nat` | Unchanged |
+
+Added helpers: `some()`, `none()`, `to_bigint()`, `HashMapBuckets` type alias.
+
+**`eval.rs`** — fix arity computation for monadic types
+
+`compute_arity_from_type` now delta-reduces type aliases (ST, EST, EIO, IO,
+BaseIO, etc.) to expose hidden ForallE binders. This is necessary because
+`ST σ α = Void σ → ST.Out σ α` — `@[extern]` builtins returning `ST σ X`
+have one more arg (the world token) than ForallE binders alone reveal.
+
+Added helpers: `get_app_head_const`, `is_function_type_alias`,
+`try_delta_reduce_type` (with fuel limit of 8 reductions).
+
+**`builtins.rs`** — monadic calling convention + ~40 new builtins
+
+*Monadic calling convention (ST/IO):*
+- Builtins receiving a world token take it as their last arg
+- Return `EStateM.Result.ok(result, world)` or `EStateM.Result.error(err, world)`
+- Helper fns: `st_result()`, `io_ok()`, `io_error()`, `extract_world()`
+- ST.Prim.mkRef/Ref.get/Ref.set/Ref.swap updated to this convention
+- IO.println/print/eprintln updated to this convention
+
+*New builtins (72 → ~112):*
+
+| Group | Builtins |
+| ----- | -------- |
+| Thunk | `pure`, `get` (eager: identity) |
+| Platform | `getIsWindows` (→ false), `getIsOSX` (→ true on macOS), `getIsEmscripten` (→ false), `getNumBits` (→ 64) |
+| IO timing | `monoMsNow`, `monoNanosNow`, `getNumHeartbeats`, `initializing` (all stubbed → 0/false) |
+| HashMap | `mkEmpty`/`empty`, `insert`, `find?`, `size`, `contains` |
+| ByteArray | `mkEmpty`, `push`, `size`, `get!` |
+| Array (extra) | `fget`, `fset`, `pop`, `fswap`/`swap`, `uget` |
+| Int | `ofNat`, `negSucc`, `add`, `sub`, `mul`, `div`, `mod`, `neg`, `decEq`, `decLe`, `decLt`, `decNonneg`, `toNat` |
+| Name | `beq`, `hash`, `mkStr`, `mkNum` |
+| USize (extra) | `add`, `sub`, `mul`, `div`, `mod`, `decEq`, `decLt`, `decLe` |
+| Float | `ofScientific`, `toString` (stubs) |
+
+*HashMap implementation:* bucket-chained hash map keyed by `value_hash()`
+(structural hash of Nat/String/Ctor). Supports structural equality via
+`value_eq()`. Represented as `Arc<RefCell<FxHashMap<u64, Vec<(Value, Value)>>>>`.
+
+**`tests.rs`** — 8 new tests
+
+| Test | What it verifies |
+| ---- | ---------------- |
+| `test_st_ref_monadic_convention` | ST.Prim.mkRef returns EStateM.Result.ok wrapping Ref |
+| `test_io_println_monadic_convention` | IO.println returns EStateM.Result.ok wrapping Unit |
+| `test_hashmap_operations` | create, insert, find?, size, Option.none/some |
+| `test_int_arithmetic` | Int add/sub/mul/neg |
+| `test_bytearray_operations` | mkEmpty, push, size, get! |
+| `test_arity_computation_monadic` | arity fix doesn't crash on real .olean types |
+| `test_loader_module` | `loader::load_prelude_env()` works |
+| `test_loader_module_with_deps` | `loader::load_module_env()` loads transitive deps |
+
+#### What is NOT yet done (still needed for Phase 4 Mode A)
+
+- **ST.Ref.modifyGet** — requires interpreter to apply a closure arg; stubbed
+- **Expr builtins** (instantiate1, instantiateRev, abstract, etc.) — needed
+  for elaborator kernel bridge
+- **Environment bridge builtins** (Environment.find, addDeclCore, Kernel.isDefEq)
+- **IO monad end-to-end test** — evaluating `IO.println "hello"` through the
+  real .olean definitions (requires correct arity for all IO primitives)
+
+#### Next steps for Phase 4 Mode A
+
+1. Add Expr builtins operating on `Value::KernelExpr`
+2. Add Environment bridge builtins
+3. Load full Init library (Init.* modules) into interpreter
+4. Call `Lean.Elab.Frontend.processCommands` stub and trace execution
