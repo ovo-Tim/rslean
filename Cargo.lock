@@ -292,6 +292,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rslean-interp"
+version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "rslean-expr",
+ "rslean-kernel",
+ "rslean-level",
+ "rslean-name",
+ "rslean-olean",
+ "rustc-hash",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "rslean-kernel"
 version = "0.1.0"
 dependencies = [

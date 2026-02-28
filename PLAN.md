@@ -271,138 +271,118 @@ This phase replaces the old Phase 2 (unsafe C++ runtime) and Phase 5 (code
 generator). Instead of compiling Lean to native code with manual RC, we
 interpret Lean code in a safe Rust VM where all memory is managed by Rust.
 
-### 3.1 Value Representation
+### 3.1 Approach: Tree-Walking Interpreter
+
+**Design change:** The original plan called for a bytecode compiler (Opcode
+enum, bytecode compiler pass). The actual implementation uses a simpler
+**tree-walking interpreter** that evaluates kernel `Expr` values directly.
+
+Rationale:
+- Simpler to implement and debug (no separate compilation pass)
+- Correct first, fast later — bytecode can be added as an optimization
+- Fewer moving parts means fewer bugs during Phase 4 elaborator integration
+
+### 3.2 Value Representation
 
 ```rust
-/// Every Lean value in the interpreter — fully managed by Rust
-#[derive(Clone)]
-enum Value {
-    /// Constructor: `Name` is the inductive type, `tag` is the constructor
-    /// index, `fields` are the constructor arguments
-    Ctor { tag: u32, fields: Vec<Value> },
+#[derive(Clone, Debug)]
+pub enum Value {
+    Nat(Arc<BigUint>),          // Arbitrary precision natural
+    String(Arc<str>),           // String value
+    Ctor {                      // Constructor application
+        tag: u32,
+        name: Name,
+        fields: Vec<Value>,
+    },
+    Closure {                   // Function waiting for arguments
+        func: FuncRef,
+        captured: Vec<Value>,
+        remaining_arity: u32,
+    },
+    Array(Arc<Vec<Value>>),     // Array of values
+    Erased,                     // Type/proof (computationally irrelevant)
+    KernelExpr(Expr),           // Opaque expr for elaborator bridge
+}
 
-    /// Closure: captured environment + remaining arity + body
-    Closure { env: Vec<Value>, arity: u32, body: Arc<Thunk> },
-
-    /// Primitive literals
-    Nat(num_bigint::BigUint),
-    String(Arc<str>),
-
-    /// Thunk (lazy evaluation)
-    Thunk(Arc<OnceCell<Value>>),
-
-    /// External/opaque reference (for kernel Expr values passed through)
-    Expr(Expr),
-    Name(Name),
-    Level(Level),
+pub enum FuncRef {
+    Definition(Name, Vec<Level>),               // Global definition
+    Lambda(Expr, LocalEnv),                     // Lambda body + captured env
+    Builtin(Name),                              // Native Rust function
+    CtorFn { name, tag, num_params, num_fields }, // Constructor builder
+    RecursorFn(Name, Vec<Level>),               // Recursor (iota reduction)
 }
 ```
+
+**Design changes from original plan:**
+- `Ctor` includes `name: Name` (needed for recursor rule matching)
+- `Closure` uses `FuncRef` + `captured` args instead of `env + body`
+  (supports partial application of builtins and constructors, not just lambdas)
+- `Erased` replaces separate type/proof handling — ForallE, Sort, MVar all
+  evaluate to Erased since they are computationally irrelevant
+- `KernelExpr` replaces `Value::Expr/Name/Level` — single variant for
+  opaque kernel objects passed through to the elaborator
+- No `Thunk` variant — lazy evaluation not yet needed; can add later
+- `Array` added for Array builtin support
 
 No `lean_inc` / `lean_dec`. Rust's ownership handles everything:
 - `Vec<Value>` for constructor fields — dropped when unreachable
 - `Arc<T>` for shared data — reference counted by Rust (safe, cycle-free)
 - `Clone` is cheap (Arc bumps refcount atomically)
 
-### 3.2 Bytecode Design
+### 3.3 Core Evaluation
 
-Compile kernel `Expr` values from .olean files into flat bytecodes:
+The `Interpreter` struct holds the kernel `Environment`, a builtin registry
+(`FxHashMap<Name, BuiltinFn>`), a const cache, and a depth counter.
 
-```rust
-enum Opcode {
-    // Stack operations
-    Push(u32),              // push local variable
-    Pop,                    // discard top
-    Dup,                    // duplicate top
+`eval(expr, local_env) -> InterpResult<Value>`:
 
-    // Construction
-    MkCtor(u32, u32),       // make constructor (tag, nfields)
-    MkClosure(FuncId, u32), // make closure (function, captured_count)
-    Proj(u32),              // project field from constructor
-
-    // Control flow
-    Apply,                  // apply closure to argument
-    TailApply,              // tail-call apply
-    Ret,                    // return top of stack
-    Case(Vec<(u32, PC)>),   // branch on constructor tag
-    Jmp(PC),                // unconditional jump
-
-    // Primitives
-    NatLit(BigUint),        // push Nat literal
-    StrLit(Arc<str>),       // push String literal
-    BuiltinCall(BuiltinId), // call built-in operation
-
-    // Kernel callbacks (safe Rust calls)
-    CallKernel(KernelOp),   // isDefEq, whnf, inferType, etc.
-}
-```
-
-### 3.3 Bytecode Compiler
-
-Translate kernel `Expr` (from .olean `ConstantInfo.value`) to bytecodes:
-
-- Lambda bodies → function definitions with bytecode
-- Application → `Push` args + `Apply`
-- Pattern matching (recursor applications) → `Case` dispatch
-- Let bindings → `Push` value + body
-- Projections → `Proj(field_index)`
-- Constants → look up and inline or call
-- Type/proof erasure: skip computationally irrelevant terms
-
-This is simpler than a full LCNF pipeline because we don't need:
-- Monomorphization (interpreter handles polymorphism directly)
-- RC insertion (Rust handles it)
-- Closure conversion (interpreter supports closures natively)
-- Boxing/unboxing optimization
+| ExprKind | Action |
+|----------|--------|
+| `Lit(Nat(n))` | `Value::Nat(n)` |
+| `Lit(Str(s))` | `Value::String(s)` |
+| `BVar(i)` | `local_env.lookup(i)` |
+| `Lam(_, _, body, _)` | `Value::Closure { func: Lambda(body, env), arity: 1 }` |
+| `LetE(_, _, val, body, _)` | Evaluate val, push onto env, evaluate body |
+| `App(f, a)` | Evaluate f and a, apply (beta-reduce or accumulate partial) |
+| `Const(name, levels)` | Check builtins first, then `eval_const(name, levels)` |
+| `ForallE / Sort / MVar` | `Value::Erased` |
+| `MData(_, e)` | Evaluate e (metadata is transparent) |
+| `Proj(struct_name, idx, e)` | Evaluate e to Ctor, return `fields[idx]` |
+| `FVar(_)` | `Value::KernelExpr(expr)` (for elaborator bridge) |
 
 ### 3.4 Built-in Operations
 
-Implement native Rust functions for performance-critical builtins:
+**Design change:** Builtins are registered as `fn(&[Value]) -> InterpResult<Value>`
+in an `FxHashMap<Name, BuiltinFn>`, keyed by Lean declaration name (e.g.,
+`Nat.add`). The original plan used an `enum BuiltinId`. The hashmap approach
+is more extensible and avoids maintaining a parallel enum.
 
-```rust
-enum BuiltinId {
-    // Nat arithmetic
-    NatAdd, NatSub, NatMul, NatDiv, NatMod,
-    NatBEq, NatBLt, NatDecEq, NatDecLt,
+Arity is computed automatically by counting ForallE binders in the
+constant's type from the environment.
 
-    // String operations
-    StrAppend, StrLength, StrGet, StrPush, StrMk,
+44 builtins implemented:
+- **Nat** (18): add, sub, mul, div, mod, pow, gcd, beq, ble, pred,
+  land, lor, xor, shiftLeft, shiftRight, decEq, decLe, decLt
+- **String** (6): decEq, append, length, mk, push, utf8ByteSize
+- **Bool** (1): decEq
+- **Array** (5): mkEmpty, push, size, get!, set!
+- **UInt32** (10): ofNat, toNat, add, sub, mul, div, mod, decEq, decLt, decLe
+- **USize** (2): ofNat, toNat
+- Decidable results use `Ctor { tag: 0 = isFalse, tag: 1 = isTrue }`
 
-    // Array operations (Vec<Value> under the hood)
-    ArrayMk, ArrayGet, ArraySet, ArrayPush, ArraySize,
+### 3.5 Iota Reduction
 
-    // HashMap / persistent data structures
-    HashMapInsert, HashMapFind,
+When a recursor is fully applied:
+1. Identify major premise from argument position
+2. Evaluate major premise to a `Value::Ctor { tag, name, fields }`
+3. Special-case Nat: `0` maps to `Nat.zero`, `n+1` maps to `Nat.succ(n-1)`
+4. Find matching `RecursorRule` by constructor name
+5. Build substitution: params + motives + minors + constructor fields
+6. Push substitution into a `LocalEnv` (forward order so fields end up
+   at bvar(0), matching de Bruijn convention)
+7. Evaluate the rule's RHS with the substitution environment
 
-    // Kernel operations (callbacks into safe Rust kernel)
-    KernelInferType, KernelIsDefEq, KernelWhnf, KernelAddDecl,
-}
-```
-
-### 3.5 Kernel ↔ Interpreter Bridge
-
-The elaborator (running in the interpreter) calls kernel operations. The
-interpreter has "escape hatches" that call into the safe Rust kernel:
-
-```
-Interpreted Lean code (MetaM.isDefEq a b)
-    → interpreter sees BuiltinCall(KernelIsDefEq)
-    → calls Rust kernel's is_def_eq(a, b) directly
-    → returns result to interpreter
-```
-
-This is safe: both sides are safe Rust. The interpreter passes `Value::Expr`
-objects to the kernel, which operates on them natively.
-
-### 3.6 Environment Extension State
-
-The elaborator maintains state (registered simp lemmas, attributes, instances,
-etc.) through environment extensions. The interpreter must support:
-
-- `EnvExtension` registration and lookup
-- Serialized extension entries from .olean files
-- Mutable state for the elaborator monad (via `RefCell` / interior mutability)
-
-### 3.7 Milestone
+### 3.6 Milestone
 
 1. Load `Init.Prelude` .olean definitions into the interpreter
 2. Evaluate `Nat.add 2 3` → `Value::Nat(5)`
@@ -717,3 +697,99 @@ parser) can be deferred.
 
 **Parallel track:** Phase 2 (Rust parser) can proceed independently for
 future Mode B bootstrapping support.
+
+### Phase 3 — IN PROGRESS (2026-02-28)
+
+#### `rslean-interp` crate — Safe Lean Interpreter
+
+Tree-walking interpreter that evaluates Lean kernel `Expr` values directly
+(no bytecode compilation). Implemented with **41 passing tests**, bringing
+workspace total to **117 tests**.
+
+#### Files
+
+```
+crates/rslean-interp/src/
+├── lib.rs          — pub re-exports
+├── value.rs        — Value enum (Nat, String, Ctor, Closure, Array, Erased, KernelExpr)
+├── env.rs          — LocalEnv (de Bruijn indexed variable stack)
+├── error.rs        — InterpError enum (10 variants)
+├── eval.rs         — Interpreter struct + core eval() function
+├── builtins.rs     — 44 builtin functions registered by Lean name
+├── iota.rs         — recursor/casesOn iota reduction
+└── tests.rs        — 41 unit tests
+```
+
+#### What's implemented
+
+| Component | Details |
+|-----------|---------|
+| **Value** | `Nat(Arc<BigUint>)`, `String(Arc<str>)`, `Ctor{tag,name,fields}`, `Closure{func,captured,arity}`, `Array`, `Erased`, `KernelExpr` |
+| **FuncRef** | `Definition`, `Lambda`, `Builtin`, `CtorFn`, `RecursorFn` |
+| **eval()** | All 12 ExprKind variants handled |
+| **Const eval** | Definition/Theorem body evaluation, Constructor → Ctor values, Recursor → iota reduction |
+| **Iota reduction** | Correct de Bruijn substitution for recursor rules; Nat special-casing (0 → Nat.zero, n+1 → Nat.succ) |
+| **Partial application** | Closures accumulate args until fully applied |
+| **Stack overflow** | Depth limit of 256 (prevents runaway recursion) |
+| **Const caching** | Level-monomorphic constants cached after first evaluation |
+| **44 builtins** | Nat (add/sub/mul/div/mod/pow/gcd/beq/ble/pred/land/lor/xor/shifts + decEq/decLe/decLt), String (append/length/mk/push/utf8ByteSize + decEq), Bool (decEq), Array (mkEmpty/push/size/get!/set!), UInt32 (full arithmetic + of/toNat + decidable), USize (of/toNat) |
+
+#### Key design decisions
+
+- **Tree-walking** over bytecode compilation: simpler to implement and debug,
+  can optimize to bytecode later if performance requires it
+- **Builtin lookup by Lean name** (e.g., `Nat.add`) not C extern name
+  (`lean_nat_add`), since we register by declaration name
+- **Arity computed from type**: count ForallE binders in the constant's type
+  to determine how many args a builtin needs before it fires
+- **Erased types/proofs**: ForallE, Sort, MVar all evaluate to `Value::Erased`;
+  applying anything to Erased returns Erased (computationally irrelevant)
+- **FVar passthrough**: Free variables become `Value::KernelExpr` for the
+  elaborator bridge (Phase 4)
+- **De Bruijn substitution for iota**: push subst in forward order
+  (params, motives, minors, fields) so that `LocalEnv::push` prepends correctly
+  — fields end up at bvar(0), matching Lean's convention
+
+#### Test coverage
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| LocalEnv | 3 | push/lookup, out of bounds |
+| Value construction | 4 | Nat, String, Bool, Unit |
+| Literals | 2 | Nat lit, String lit |
+| BVar | 2 | lookup, unbound error |
+| Lambda/App | 2 | identity, const function |
+| Let | 2 | simple, nested |
+| Type erasure | 2 | Sort, ForallE |
+| MData | 1 | transparency |
+| Const/Definition | 1 | polymorphic id |
+| Constructor/Proj | 2 | Prod.mk, projection |
+| Recursor (Bool) | 2 | Bool.rec true/false |
+| Recursor (Nat) | 1 | Nat.rec zero case |
+| Nat builtins | 8 | add, mul, sub, div, mod, pow, beq, decEq |
+| String builtins | 2 | append, length |
+| Array builtins | 1 | mkEmpty + push |
+| Other | 4 | FVar passthrough, zero-arity ctor, stack overflow, partial app |
+| **Total** | **41** | |
+
+#### What is NOT yet done in Phase 3
+
+- **Integration tests with .olean files** — loading real definitions from
+  Init.Prelude and evaluating expressions like `Nat.add 2 3` against the
+  actual environment (Step 7 in the plan)
+- **Priority 2 builtins** — ST/Ref (RefCell), HashMap, Name operations
+  needed for Phase 4 elaborator
+- **Priority 3 builtins** — IO, Float, Process/File (stubs sufficient)
+- **List.map milestone** — requires loading real List definitions from .olean
+  to test `List.map (· + 1) [1, 2, 3]` end-to-end
+- **Recursive iota reduction** — for recursive inductives (e.g., Nat.rec on
+  `succ n`), the current implementation passes fields directly without
+  computing recursive results; full recursive iota needs the recursor to
+  recursively apply itself to recursive arguments before passing to the minor
+
+#### Next steps
+
+1. **Recursive iota**: handle recursive arguments in recursor rules
+2. **.olean integration tests**: load Init.Prelude, evaluate real expressions
+3. **Phase 4 prep**: ST/Ref builtins, HashMap builtins, Name operations
+4. **Phase 4 Mode A**: interpreted elaborator glue code
