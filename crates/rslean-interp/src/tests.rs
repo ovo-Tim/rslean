@@ -2161,3 +2161,180 @@ fn test_loader_module_with_deps() {
     // Should also have dependencies like Nat.add from Prelude
     assert!(env.find(&Name::from_str_parts("Nat.add")).is_some());
 }
+
+#[test]
+#[ignore = "slow: loads all Init.* modules (~6 min)"]
+fn test_loader_all_init_modules() {
+    // Test that load_all_init_modules() loads the full Init library
+    let env = match loader::load_all_init_modules() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    // Core definitions from Init.Prelude
+    assert!(env.find(&Name::from_str_parts("Nat.add")).is_some());
+    assert!(env.find(&Name::from_str_parts("Bool.true")).is_some());
+    assert!(env.find(&Name::from_str_parts("List.map")).is_some());
+    // Deeper Init modules should be present
+    assert!(env.find(&Name::from_str_parts("String.append")).is_some());
+}
+
+#[test]
+fn test_io_monad_world_token() {
+    // Test that IO builtins follow monadic calling convention:
+    // they receive a world token as last arg and return EStateM.Result.ok(result, world)
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    // Build: IO.println "hello" applied to a world token (Value::Erased)
+    // IO.println has type String → IO Unit, and IO α = EIO IO.Error α = Void → EStateM.Result ...
+    // So fully applied: IO.println "hello" world_token
+    let str_val = Value::string("hello");
+    let world_token = Value::Erased;
+
+    // First apply to the string
+    let io_action = interp
+        .apply(
+            Value::Closure {
+                func: crate::value::FuncRef::Builtin(Name::from_str_parts("IO.println")),
+                captured: vec![],
+                remaining_arity: 2,
+            },
+            str_val,
+        )
+        .unwrap();
+
+    // Then apply to world token to execute
+    let result = interp.apply(io_action, world_token).unwrap();
+
+    // Result should be EStateM.Result.ok with Unit result
+    // EStateM.Result.ok is the first constructor (tag 0)
+    match &result {
+        Value::Ctor { tag: 0, fields, .. } => {
+            assert_eq!(fields.len(), 2);
+            // fields[0] should be Unit.unit (tag=0, no fields)
+            assert!(matches!(&fields[0], Value::Ctor { tag: 0, .. }));
+        }
+        _ => panic!("Expected EStateM.Result.ok, got: {:?}", result),
+    }
+}
+
+#[test]
+fn test_st_ref_full_monadic() {
+    // End-to-end test: mkRef, then Ref.get using monadic convention
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    let mut interp = Interpreter::new(env);
+
+    // ST.Prim.mkRef : {σ α} → α → ST σ (ST.Ref σ α)
+    // With delta-reduction: arity = 4 (σ, α, val, world)
+    // We'll call it as: mkRef σ α (Nat 42) world
+    let val = Value::nat_small(42);
+    let world = Value::Erased;
+
+    // Build closure for mkRef
+    let mkref_closure = Value::Closure {
+        func: crate::value::FuncRef::Builtin(Name::from_str_parts("ST.Prim.mkRef")),
+        captured: vec![],
+        remaining_arity: 4,
+    };
+
+    // Apply 4 args: σ=Erased, α=Erased, val=42, world=Erased
+    let r1 = interp.apply(mkref_closure, Value::Erased).unwrap();
+    let r2 = interp.apply(r1, Value::Erased).unwrap();
+    let r3 = interp.apply(r2, val).unwrap();
+    let mk_result = interp.apply(r3, world.clone()).unwrap();
+
+    // Should return EStateM.Result.ok(Ref(...), world)
+    // EStateM.Result.ok is the first constructor (tag 0)
+    let ref_val = match &mk_result {
+        Value::Ctor { tag: 0, fields, .. } => fields[0].clone(), // EStateM.Result.ok
+        _ => panic!("Expected EStateM.Result.ok from mkRef, got: {:?}", mk_result),
+    };
+    assert!(matches!(&ref_val, Value::Ref(_)));
+
+    // Now call ST.Prim.Ref.get: {σ α} → ST.Ref σ α → ST σ α
+    // Arity: 3 (σ, ref, world)
+    let get_closure = Value::Closure {
+        func: crate::value::FuncRef::Builtin(Name::from_str_parts("ST.Prim.Ref.get")),
+        captured: vec![],
+        remaining_arity: 3,
+    };
+
+    let g1 = interp.apply(get_closure, Value::Erased).unwrap(); // σ
+    let g2 = interp.apply(g1, ref_val).unwrap(); // ref
+    let get_result = interp.apply(g2, world).unwrap(); // world
+
+    // Should return EStateM.Result.ok(Nat(42), world)
+    // EStateM.Result.ok is tag 0
+    match &get_result {
+        Value::Ctor { tag: 0, fields, .. } => {
+            assert!(fields[0].as_nat().is_some());
+            assert_eq!(*fields[0].as_nat().unwrap(), BigUint::from(42u64));
+        }
+        _ => panic!("Expected EStateM.Result.ok from Ref.get, got: {:?}", get_result),
+    }
+}
+
+#[test]
+fn test_lean_expr_builtins_via_eval() {
+    // Test Lean.Expr structural builtins with a loaded environment
+    // These operate on Value::Ctor values representing Lean.Expr
+    use crate::builtins::test_builtin_call;
+
+    // Lean.Expr.bvar : Nat → Expr  (ctor tag 0, field: de Bruijn index)
+    let idx = Value::nat_small(3);
+    let bvar_ctor = Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("Lean.Expr.bvar"),
+        fields: vec![idx.clone()],
+    };
+
+    // isBVar should return true (Bool.true = tag 1)
+    let is_bvar = test_builtin_call("Lean.Expr.isBVar", &[bvar_ctor.clone()]).unwrap();
+    assert!(matches!(&is_bvar, Value::Ctor { tag: 1, .. }), "expected Bool.true");
+
+    // isFVar should return false (Bool.false = tag 0)
+    let is_fvar = test_builtin_call("Lean.Expr.isFVar", &[bvar_ctor.clone()]).unwrap();
+    assert!(matches!(&is_fvar, Value::Ctor { tag: 0, .. }), "expected Bool.false");
+
+    // bvar! should return the index
+    let got_idx = test_builtin_call("Lean.Expr.bvar!", &[bvar_ctor]).unwrap();
+    assert_eq!(*got_idx.as_nat().unwrap(), BigUint::from(3u64));
+}
+
+#[test]
+fn test_lean_name_builtins() {
+    use crate::builtins::test_builtin_call;
+
+    // Lean.Name.str: Name → String → Name  (builds hierarchical names)
+    // Internally we use Value::KernelExpr or Value::Ctor to represent names
+    // For now, test that the builtin doesn't crash and returns something
+    let anon = Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("Lean.Name.anonymous"),
+        fields: vec![],
+    };
+    let str_part = Value::string("Foo");
+
+    let name_result = test_builtin_call("Lean.Name.str", &[anon.clone(), str_part]).unwrap();
+    // Should return a Ctor representing the name
+    assert!(matches!(&name_result, Value::Ctor { .. }));
+
+    // isAnonymous should be true for anonymous
+    let is_anon = test_builtin_call("Lean.Name.isAnonymous", &[anon]).unwrap();
+    assert!(matches!(&is_anon, Value::Ctor { tag: 1, .. }), "expected Bool.true for anonymous");
+}

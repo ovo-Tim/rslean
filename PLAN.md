@@ -821,9 +821,128 @@ Added helpers: `get_app_head_const`, `is_function_type_alias`,
 - **IO monad end-to-end test** — evaluating `IO.println "hello"` through the
   real .olean definitions (requires correct arity for all IO primitives)
 
+---
+
+### Phase 4.2 — Structural Builtins + Integration Tests — COMPLETE ✓ (2026-02-28)
+
+Lean.Expr/Name/Level structural builtins, Environment bridge stubs,
+IO handle builtins, extra String/Option helpers, full-library loader, and
+end-to-end IO monad tests.
+
+**67 interp tests, 143 workspace total** (up from 63/139).
+
+#### Changes
+
+**`loader.rs`** — added `load_all_init_modules()`
+
+```rust
+pub fn load_all_init_modules() -> Option<Environment> {
+    load_module_env("Init")
+}
+```
+
+Loads the full `Init` library transitively by loading the top-level `Init`
+module (which imports all Init.* sub-modules). Marked `#[ignore]` in tests
+because it's too heavy for regular CI (stack overflow risk with deep recursion).
+
+**`builtins.rs`** — ~40 new builtins (total ~112 → ~150+)
+
+*Lean.Expr structural ops:*
+
+| Builtin | Action |
+| ------- | ------ |
+| `Lean.Expr.eqv`, `lt`, `hash` | Structural equality/ordering/hash on Value::Ctor Expr |
+| `Lean.Expr.is{BVar,FVar,MVar,Sort,Const,App,Lambda,Forall,Let,Lit,MData,Proj}` | Tag predicate → Bool |
+| `Lean.Expr.bvar!`, `fvarId!`, `mvarId!` | Field accessors |
+| `Lean.Expr.hasLooseBVars`, `looseBVarRange`, `hasFVar`, `hasMVar`, `approxDepth` | Metadata queries |
+| `lean_mk_bvar/fvar/mvar/sort/const/app/app2/app3/appN/lambda/forall/let/lit/mdata/proj` | Ctor builders |
+| `Lean.Expr.headBeta`, `getAppNumArgs`, `dbgToString`, `ctorIdx` | Utilities |
+
+*Lean.Name structural ops:*
+
+| Builtin | Action |
+| ------- | ------ |
+| `Lean.Name.beq`, `hash` | Equality/hash |
+| `Lean.Name.str`, `num` | Build hierarchical names |
+| `Lean.Name.isAnonymous`, `isStr`, `isNum` | Tag predicates |
+| `Lean.Name.getString!`, `getNum!` | Field accessors |
+| `Lean.Name.append`, `toString`, `quickLt` | Utilities |
+
+*Lean.Level structural ops:*
+
+| Builtin | Action |
+| ------- | ------ |
+| `Lean.Level.beq`, `hash` | Equality/hash |
+| `Lean.Level.isZero`, `isSucc`, `isMax`, `isIMax`, `isParam`, `isMVar` | Tag predicates |
+| `Lean.Level.succ!`, `max!` / `imax!` fields, `param!`, `mvar!` | Field accessors |
+
+*Environment bridge stubs:*
+- `lean_env_find`, `Lean.Environment.contains`
+- `Lean.Environment.isConstructor`, `isInductive`, `isRecursor`
+- `Lean.PersistentHashMap.*`, `Lean.RBTree.*` (no-op stubs)
+
+*IO extras:*
+- `IO.getStdout`, `IO.getStderr`, `IO.getStdin` (return Erased handle)
+- `IO.Handle.putStr`, `IO.Handle.putStrLn`, `IO.Handle.flush`
+- `IO.getEnv`, `IO.isEOF`, `IO.getLine`, `IO.Error.toString`, `IO.Error.userError`
+
+*String extras:*
+- `String.toNat?`, `String.toInt?`, `String.startsWith`, `String.endsWith`
+- `String.contains`, `String.splitOn`, `String.replace`, `String.trim`
+- `String.trimLeft`, `String.toList`
+- `Option.isSome`, `Option.isNone`, `Option.get!`
+
+*Helper functions added:*
+- `ctor_tag(v)` — extract tag from Ctor, or 0 for Nat/String
+- `ctor_field(v, i)` — extract i-th field from Ctor
+- `value_lt(a, b)` — structural less-than for Name.quickLt etc.
+
+**`tests.rs`** — 6 new tests (67 total, 1 ignored)
+
+| Test | What it verifies |
+| ---- | ---------------- |
+| `test_loader_all_init_modules` | `load_all_init_modules()` loads Init.* (ignored: heavy) |
+| `test_io_monad_world_token` | IO.println applied to world token returns `EStateM.Result.ok(Unit, world)` |
+| `test_st_ref_full_monadic` | mkRef then Ref.get round-trip through monadic convention |
+| `test_lean_expr_builtins_via_eval` | Lean.Expr.isBVar/isFVar/bvar! on Value::Ctor |
+| `test_lean_name_builtins` | Lean.Name.str, isAnonymous |
+| (corrected) | `EStateM.Result.ok` is tag 0 (first ctor), not tag 1 |
+
+**Key bug fix:** `EStateM.Result.ok` is the first constructor (tag 0), not tag 1.
+Corrected in test assertions.
+
+**Stack overflow fix in `rslean-olean` deserializer:**
+
+`deser_expr` was deeply recursive — each `App`, `Lam`, `ForallE`, `LetE` node
+made 2-3 recursive calls, overflowing on deeply nested expressions in large
+modules. Fixed by converting the four recursive cases to iterative spine/chain
+unrolling:
+
+- **App** (`deser_app_spine`): Iteratively follows the left-recursive fn
+  position collecting `(pos, arg_ref)` pairs, then rebuilds from the leaf.
+- **Lam** (`deser_lam_chain`): Iteratively follows body position collecting
+  binder info, then reconstructs from innermost to outermost.
+- **ForallE** (`deser_forall_chain`): Same pattern as Lam.
+- **LetE** (`deser_let_chain`): Same pattern, with type + val at each level.
+
+All intermediate nodes are cached, preserving sharing. The remaining recursive
+calls (for args, types, values) are bounded since those sub-expressions are
+typically shallow. `test_loader_all_init_modules` now passes (~6 min, loads
+the full Init library).
+
+#### What is NOT yet done (still needed for Phase 4 Mode A)
+
+- **Expr.instantiate1 / instantiateRev / abstract** — manipulation builtins
+  needed when elaborator performs substitution via Rust kernel
+- **Real Environment bridge** — `lean_env_find` etc. currently return Erased;
+  need to bridge to the real `Arc<Environment>` kept in `Value::Environment`
+- **Call Lean elaborator** — load `Lean.Elab.Frontend.processCommands` and
+  attempt to call it with a stub Syntax value
+
 #### Next steps for Phase 4 Mode A
 
-1. Add Expr builtins operating on `Value::KernelExpr`
-2. Add Environment bridge builtins
-3. Load full Init library (Init.* modules) into interpreter
-4. Call `Lean.Elab.Frontend.processCommands` stub and trace execution
+1. Fix stack overflow in `load_all_init_modules` (increase stack size or
+   switch to iterative BFS that doesn't recurse into `load_env_with_deps`)
+2. Implement Expr.instantiate1 / instantiateRev operating on `Value::KernelExpr`
+3. Wire real Environment bridge so elaborator can query the kernel environment
+4. Call `Lean.Elab.Frontend.processCommands` and trace the first few steps

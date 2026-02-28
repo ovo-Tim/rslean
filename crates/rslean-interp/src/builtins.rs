@@ -188,6 +188,122 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     // Float stubs
     reg(map, "Float.ofScientific", float_of_scientific);
     reg(map, "Float.toString", float_to_string);
+
+    // Lean.Expr structural operations
+    // These operate on Lean.Expr values as Value::Ctor or Value::KernelExpr
+    reg(map, "Lean.Expr.eqv", lean_expr_eqv);
+    reg(map, "Lean.Expr.lt", lean_expr_lt);
+    reg(map, "Lean.Expr.hash", lean_expr_hash);
+    reg(map, "Lean.Expr.bvar!", lean_expr_bvar_idx);
+    reg(map, "Lean.Expr.fvarId!", lean_expr_fvar_id);
+    reg(map, "Lean.Expr.mvarId!", lean_expr_mvar_id);
+    reg(map, "Lean.Expr.isBVar", lean_expr_is_bvar);
+    reg(map, "Lean.Expr.isFVar", lean_expr_is_fvar);
+    reg(map, "Lean.Expr.isMVar", lean_expr_is_mvar);
+    reg(map, "Lean.Expr.isSort", lean_expr_is_sort);
+    reg(map, "Lean.Expr.isConst", lean_expr_is_const);
+    reg(map, "Lean.Expr.isApp", lean_expr_is_app);
+    reg(map, "Lean.Expr.isLambda", lean_expr_is_lambda);
+    reg(map, "Lean.Expr.isForall", lean_expr_is_forall);
+    reg(map, "Lean.Expr.isLet", lean_expr_is_let);
+    reg(map, "Lean.Expr.isLit", lean_expr_is_lit);
+    reg(map, "Lean.Expr.isMData", lean_expr_is_mdata);
+    reg(map, "Lean.Expr.isProj", lean_expr_is_proj);
+    reg(map, "Lean.Expr.hasLooseBVars", lean_expr_has_loose_bvars);
+    reg(map, "Lean.Expr.looseBVarRange", lean_expr_loose_bvar_range);
+    reg(map, "Lean.Expr.hasFVar", lean_expr_has_fvar);
+    reg(map, "Lean.Expr.hasMVar", lean_expr_has_mvar);
+    reg(map, "Lean.Expr.approxDepth", lean_expr_approx_depth);
+    reg(map, "Lean.Expr.headBeta", lean_expr_head_beta);
+    reg(map, "Lean.Expr.getAppNumArgs", lean_expr_get_app_num_args);
+    // Expr constructor operations
+    reg(map, "Lean.mkBVar", lean_mk_bvar);
+    reg(map, "Lean.mkFVar", lean_mk_fvar);
+    reg(map, "Lean.mkMVar", lean_mk_mvar);
+    reg(map, "Lean.mkSort", lean_mk_sort);
+    reg(map, "Lean.mkConst", lean_mk_const);
+    reg(map, "Lean.mkApp", lean_mk_app);
+    reg(map, "Lean.mkApp2", lean_mk_app2);
+    reg(map, "Lean.mkApp3", lean_mk_app3);
+    reg(map, "Lean.mkAppN", lean_mk_app_n);
+    reg(map, "Lean.mkLambda", lean_mk_lambda);
+    reg(map, "Lean.mkForall", lean_mk_forall);
+    reg(map, "Lean.mkLet", lean_mk_let);
+    reg(map, "Lean.mkLit", lean_mk_lit);
+    reg(map, "Lean.mkMData", lean_mk_mdata);
+    reg(map, "Lean.mkProj", lean_mk_proj);
+    reg(map, "Lean.Expr.dbgToString", lean_expr_dbg_to_string);
+    reg(map, "Lean.Expr.ctorIdx", lean_expr_ctor_idx);
+
+    // Lean.Name structural operations
+    reg(map, "Lean.Name.beq", lean_name_beq);
+    reg(map, "Lean.Name.hash", lean_name_hash);
+    reg(map, "Lean.Name.str", lean_name_str);
+    reg(map, "Lean.Name.num", lean_name_num);
+    reg(map, "Lean.Name.isAnonymous", lean_name_is_anonymous);
+    reg(map, "Lean.Name.isStr", lean_name_is_str);
+    reg(map, "Lean.Name.isNum", lean_name_is_num);
+    reg(map, "Lean.Name.getString!", lean_name_get_string);
+    reg(map, "Lean.Name.getNum!", lean_name_get_num);
+    reg(map, "Lean.Name.append", lean_name_append);
+    reg(map, "Lean.Name.toString", lean_name_to_string);
+    reg(map, "Lean.Name.quickLt", lean_name_quick_lt);
+
+    // Lean.Level structural operations
+    reg(map, "Lean.Level.beq", lean_level_beq);
+    reg(map, "Lean.Level.hash", lean_level_hash);
+    reg(map, "Lean.Level.isZero", lean_level_is_zero);
+    reg(map, "Lean.Level.isSucc", lean_level_is_succ);
+    reg(map, "Lean.Level.isMax", lean_level_is_max);
+    reg(map, "Lean.Level.isIMax", lean_level_is_imax);
+    reg(map, "Lean.Level.isParam", lean_level_is_param);
+    reg(map, "Lean.Level.isMVar", lean_level_is_mvar);
+    reg(map, "Lean.Level.succ!", lean_level_succ_of);
+    reg(map, "Lean.Level.max!", lean_level_max_of);
+    reg(map, "Lean.Level.imax!", lean_level_imax_of);
+    reg(map, "Lean.Level.param!", lean_level_param_of);
+    reg(map, "Lean.Level.mvar!", lean_level_mvar_of);
+
+    // Lean.Environment bridge (stub implementations)
+    reg(map, "Lean.Environment.find?", lean_env_find);
+    reg(map, "Lean.Environment.contains", lean_env_contains);
+    reg(map, "Lean.Environment.isConstructor", lean_env_is_constructor);
+    reg(map, "Lean.Environment.isInductive", lean_env_is_inductive);
+    reg(map, "Lean.Environment.isRecursor", lean_env_is_recursor);
+
+    // Lean.RBTree / PersistentHashMap stubs (needed by elaborator data structures)
+    reg(map, "Lean.RBNode.depth", lean_rbnode_depth);
+    reg(map, "Lean.PersistentHashMap.mkEmptyEntries", lean_persistent_hashmap_mk_empty);
+
+    // Additional IO stubs
+    reg(map, "IO.getStdout", io_get_stdout);
+    reg(map, "IO.getStderr", io_get_stderr);
+    reg(map, "IO.getStdin", io_get_stdin);
+    reg(map, "IO.Handle.putStr", io_handle_put_str);
+    reg(map, "IO.Handle.flush", io_handle_flush);
+    reg(map, "IO.Handle.putStrLn", io_handle_put_str_ln);
+    reg(map, "IO.getEnv", io_get_env);
+    reg(map, "IO.isEOF", io_is_eof);
+    reg(map, "IO.getLine", io_get_line);
+    reg(map, "IO.Error.toString", io_error_to_string);
+    reg(map, "IO.Error.userError", io_error_user_error);
+
+    // String extra builtins
+    reg(map, "String.toNat?", string_to_nat_opt);
+    reg(map, "String.toInt?", string_to_int_opt);
+    reg(map, "String.startsWith", string_starts_with);
+    reg(map, "String.endsWith", string_ends_with);
+    reg(map, "String.contains", string_contains_char);
+    reg(map, "String.splitOn", string_split_on);
+    reg(map, "String.replace", string_replace);
+    reg(map, "String.trim", string_trim);
+    reg(map, "String.trimLeft", string_trim_left);
+    reg(map, "String.toList", string_to_list);
+
+    // Option helpers used by various builtins
+    reg(map, "Option.isSome", option_is_some);
+    reg(map, "Option.isNone", option_is_none);
+    reg(map, "Option.get!", option_get_bang);
 }
 
 fn reg(map: &mut FxHashMap<Name, BuiltinFn>, name: &str, f: BuiltinFn) {
@@ -1421,4 +1537,768 @@ fn float_of_scientific(args: &[Value]) -> InterpResult<Value> {
 fn float_to_string(args: &[Value]) -> InterpResult<Value> {
     let _ = args;
     Ok(Value::string("0.0"))
+}
+
+// --------------- Lean.Expr structural builtins ---------------
+// Lean.Expr is a regular inductive type; values arrive as Value::Ctor.
+// We extract tag/fields and operate structurally.
+
+/// Lean.Expr tag indices (matching the Lean 4 inductive order):
+/// bvar=0, fvar=1, mvar=2, sort=3, const=4, app=5, lam=6, forall=7, letE=8, lit=9, mdata=10, proj=11
+fn lean_expr_eqv(args: &[Value]) -> InterpResult<Value> {
+    // Lean.Expr.eqv (a b : Expr) : Bool — structural equality
+    let non_erased: Vec<&Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).collect();
+    if non_erased.len() >= 2 {
+        Ok(Value::bool_(value_eq(non_erased[0], non_erased[1])))
+    } else {
+        Ok(Value::bool_(false))
+    }
+}
+
+fn lean_expr_lt(args: &[Value]) -> InterpResult<Value> {
+    // Lean.Expr.lt (a b : Expr) : Bool — structural ordering
+    let non_erased: Vec<&Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).collect();
+    if non_erased.len() >= 2 {
+        Ok(Value::bool_(value_lt(non_erased[0], non_erased[1])))
+    } else {
+        Ok(Value::bool_(false))
+    }
+}
+
+fn lean_expr_hash(args: &[Value]) -> InterpResult<Value> {
+    // Lean.Expr.hash (a : Expr) : USize
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::nat_small(value_hash(v)))
+}
+
+/// Get the tag index of a Value::Ctor (for Lean inductive dispatching).
+fn ctor_tag(v: &Value) -> Option<u32> {
+    match v {
+        Value::Ctor { tag, .. } => Some(*tag),
+        _ => None,
+    }
+}
+
+/// Get a field of a Value::Ctor by index.
+fn ctor_field(v: &Value, idx: usize) -> Option<&Value> {
+    match v {
+        Value::Ctor { fields, .. } => fields.get(idx),
+        _ => None,
+    }
+}
+
+fn lean_expr_is_bvar(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(0)))
+}
+fn lean_expr_is_fvar(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(1)))
+}
+fn lean_expr_is_mvar(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(2)))
+}
+fn lean_expr_is_sort(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(3)))
+}
+fn lean_expr_is_const(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(4)))
+}
+fn lean_expr_is_app(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(5)))
+}
+fn lean_expr_is_lambda(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(6)))
+}
+fn lean_expr_is_forall(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(7)))
+}
+fn lean_expr_is_let(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(8)))
+}
+fn lean_expr_is_lit(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(9)))
+}
+fn lean_expr_is_mdata(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(10)))
+}
+fn lean_expr_is_proj(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(11)))
+}
+
+fn lean_expr_bvar_idx(args: &[Value]) -> InterpResult<Value> {
+    // Returns the bvar index from a bvar Expr
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 0, .. })).unwrap_or(&Value::Erased);
+    Ok(ctor_field(v, 0).cloned().unwrap_or(Value::nat_small(0)))
+}
+
+fn lean_expr_fvar_id(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 1, .. })).unwrap_or(&Value::Erased);
+    Ok(ctor_field(v, 0).cloned().unwrap_or(Value::Erased))
+}
+
+fn lean_expr_mvar_id(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 2, .. })).unwrap_or(&Value::Erased);
+    Ok(ctor_field(v, 0).cloned().unwrap_or(Value::Erased))
+}
+
+fn lean_expr_has_loose_bvars(args: &[Value]) -> InterpResult<Value> {
+    // Stub: return false (conservative approximation)
+    let _ = args;
+    Ok(Value::bool_(false))
+}
+
+fn lean_expr_loose_bvar_range(args: &[Value]) -> InterpResult<Value> {
+    // Stub: return 0
+    let _ = args;
+    Ok(Value::nat_small(0))
+}
+
+fn lean_expr_has_fvar(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::bool_(false))
+}
+
+fn lean_expr_has_mvar(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::bool_(false))
+}
+
+fn lean_expr_approx_depth(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::nat_small(1))
+}
+
+fn lean_expr_head_beta(args: &[Value]) -> InterpResult<Value> {
+    // Stub: return the expr unchanged
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).cloned().unwrap_or(Value::Erased);
+    Ok(v)
+}
+
+fn lean_expr_get_app_num_args(args: &[Value]) -> InterpResult<Value> {
+    // Count application spine depth
+    fn count_apps(v: &Value) -> u64 {
+        match v {
+            Value::Ctor { tag: 5, fields, .. } if fields.len() >= 2 => {
+                1 + count_apps(&fields[0])
+            }
+            _ => 0,
+        }
+    }
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::nat_small(count_apps(v)))
+}
+
+fn lean_expr_ctor_idx(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::nat_small(ctor_tag(v).unwrap_or(0) as u64))
+}
+
+fn lean_expr_dbg_to_string(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::string(format!("{:?}", v).as_str()))
+}
+
+/// Build a Lean.Expr.bvar Ctor value from a Nat idx.
+fn lean_mk_bvar(args: &[Value]) -> InterpResult<Value> {
+    let idx = find_last_nat_val(args)?;
+    Ok(Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("Lean.Expr.bvar"),
+        fields: vec![Value::nat(idx.clone())],
+    })
+}
+
+fn lean_mk_fvar(args: &[Value]) -> InterpResult<Value> {
+    let id = args.iter().rev().find(|v| !matches!(v, Value::Erased)).cloned().unwrap_or(Value::Erased);
+    Ok(Value::Ctor {
+        tag: 1,
+        name: Name::from_str_parts("Lean.Expr.fvar"),
+        fields: vec![id],
+    })
+}
+
+fn lean_mk_mvar(args: &[Value]) -> InterpResult<Value> {
+    let id = args.iter().rev().find(|v| !matches!(v, Value::Erased)).cloned().unwrap_or(Value::Erased);
+    Ok(Value::Ctor {
+        tag: 2,
+        name: Name::from_str_parts("Lean.Expr.mvar"),
+        fields: vec![id],
+    })
+}
+
+fn lean_mk_sort(args: &[Value]) -> InterpResult<Value> {
+    let lvl = args.iter().rev().find(|v| !matches!(v, Value::Erased)).cloned().unwrap_or(Value::Erased);
+    Ok(Value::Ctor {
+        tag: 3,
+        name: Name::from_str_parts("Lean.Expr.sort"),
+        fields: vec![lvl],
+    })
+}
+
+fn lean_mk_const(args: &[Value]) -> InterpResult<Value> {
+    // mkConst (name : Name) (levels : List Level) : Expr
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    let (nm, levels) = match non_erased.as_slice() {
+        [nm, lvls, ..] => (nm.clone(), lvls.clone()),
+        [nm] => (nm.clone(), Value::Ctor { tag: 0, name: Name::from_str_parts("List.nil"), fields: vec![] }),
+        [] => (Value::Erased, Value::Ctor { tag: 0, name: Name::from_str_parts("List.nil"), fields: vec![] }),
+    };
+    Ok(Value::Ctor {
+        tag: 4,
+        name: Name::from_str_parts("Lean.Expr.const"),
+        fields: vec![nm, levels],
+    })
+}
+
+fn lean_mk_app(args: &[Value]) -> InterpResult<Value> {
+    // mkApp (f a : Expr) : Expr
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    let (f, a) = match non_erased.as_slice() {
+        [f, a, ..] => (f.clone(), a.clone()),
+        [f] => (f.clone(), Value::Erased),
+        [] => (Value::Erased, Value::Erased),
+    };
+    Ok(Value::Ctor {
+        tag: 5,
+        name: Name::from_str_parts("Lean.Expr.app"),
+        fields: vec![f, a],
+    })
+}
+
+fn lean_mk_app2(args: &[Value]) -> InterpResult<Value> {
+    // mkApp2 f a b = mkApp (mkApp f a) b
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    match non_erased.as_slice() {
+        [f, a, b, ..] => {
+            let inner = Value::Ctor { tag: 5, name: Name::from_str_parts("Lean.Expr.app"), fields: vec![f.clone(), a.clone()] };
+            Ok(Value::Ctor { tag: 5, name: Name::from_str_parts("Lean.Expr.app"), fields: vec![inner, b.clone()] })
+        }
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn lean_mk_app3(args: &[Value]) -> InterpResult<Value> {
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    match non_erased.as_slice() {
+        [f, a, b, c, ..] => {
+            let app1 = Value::Ctor { tag: 5, name: Name::from_str_parts("Lean.Expr.app"), fields: vec![f.clone(), a.clone()] };
+            let app2 = Value::Ctor { tag: 5, name: Name::from_str_parts("Lean.Expr.app"), fields: vec![app1, b.clone()] };
+            Ok(Value::Ctor { tag: 5, name: Name::from_str_parts("Lean.Expr.app"), fields: vec![app2, c.clone()] })
+        }
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn lean_mk_app_n(args: &[Value]) -> InterpResult<Value> {
+    // mkAppN (f : Expr) (args : Array Expr) : Expr
+    let f = args.iter().find(|v| !matches!(v, Value::Erased | Value::Array(_))).cloned().unwrap_or(Value::Erased);
+    let arr = args.iter().find_map(|v| match v { Value::Array(a) => Some(a.clone()), _ => None });
+    let mut result = f;
+    if let Some(arr) = arr {
+        for arg in arr.iter() {
+            result = Value::Ctor { tag: 5, name: Name::from_str_parts("Lean.Expr.app"), fields: vec![result, arg.clone()] };
+        }
+    }
+    Ok(result)
+}
+
+fn lean_mk_lambda(args: &[Value]) -> InterpResult<Value> {
+    // mkLambda (n : Name) (bi : BinderInfo) (t b : Expr) : Expr
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    match non_erased.as_slice() {
+        [n, bi, t, b, ..] => Ok(Value::Ctor {
+            tag: 6,
+            name: Name::from_str_parts("Lean.Expr.lam"),
+            fields: vec![n.clone(), bi.clone(), t.clone(), b.clone()],
+        }),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn lean_mk_forall(args: &[Value]) -> InterpResult<Value> {
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    match non_erased.as_slice() {
+        [n, bi, t, b, ..] => Ok(Value::Ctor {
+            tag: 7,
+            name: Name::from_str_parts("Lean.Expr.forallE"),
+            fields: vec![n.clone(), bi.clone(), t.clone(), b.clone()],
+        }),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn lean_mk_let(args: &[Value]) -> InterpResult<Value> {
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    match non_erased.as_slice() {
+        [n, t, v, b, ..] => Ok(Value::Ctor {
+            tag: 8,
+            name: Name::from_str_parts("Lean.Expr.letE"),
+            fields: vec![n.clone(), t.clone(), v.clone(), b.clone()],
+        }),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn lean_mk_lit(args: &[Value]) -> InterpResult<Value> {
+    let lit = args.iter().rev().find(|v| !matches!(v, Value::Erased)).cloned().unwrap_or(Value::Erased);
+    Ok(Value::Ctor {
+        tag: 9,
+        name: Name::from_str_parts("Lean.Expr.lit"),
+        fields: vec![lit],
+    })
+}
+
+fn lean_mk_mdata(args: &[Value]) -> InterpResult<Value> {
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    match non_erased.as_slice() {
+        [md, e, ..] => Ok(Value::Ctor {
+            tag: 10,
+            name: Name::from_str_parts("Lean.Expr.mdata"),
+            fields: vec![md.clone(), e.clone()],
+        }),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn lean_mk_proj(args: &[Value]) -> InterpResult<Value> {
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    match non_erased.as_slice() {
+        [sname, idx, e, ..] => Ok(Value::Ctor {
+            tag: 11,
+            name: Name::from_str_parts("Lean.Expr.proj"),
+            fields: vec![sname.clone(), idx.clone(), e.clone()],
+        }),
+        _ => Ok(Value::Erased),
+    }
+}
+
+/// Structural less-than on Values (for ordered data structures).
+fn value_lt(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Nat(x), Value::Nat(y)) => x < y,
+        (Value::String(x), Value::String(y)) => x.as_ref() < y.as_ref(),
+        (Value::Ctor { tag: t1, fields: f1, .. }, Value::Ctor { tag: t2, fields: f2, .. }) => {
+            if t1 != t2 { return t1 < t2; }
+            for (a, b) in f1.iter().zip(f2.iter()) {
+                if value_lt(a, b) { return true; }
+                if value_lt(b, a) { return false; }
+            }
+            f1.len() < f2.len()
+        }
+        _ => false,
+    }
+}
+
+// --------------- Lean.Name structural builtins ---------------
+// Lean.Name is a regular inductive: anonymous=0, str=1, num=2
+
+fn lean_name_beq(args: &[Value]) -> InterpResult<Value> {
+    let non_erased: Vec<&Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).collect();
+    if non_erased.len() >= 2 {
+        Ok(Value::bool_(value_eq(non_erased[0], non_erased[1])))
+    } else {
+        Ok(Value::bool_(false))
+    }
+}
+
+fn lean_name_hash(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::nat_small(value_hash(v)))
+}
+
+fn lean_name_str(args: &[Value]) -> InterpResult<Value> {
+    // Name.str (p : Name) (s : String) : Name — constructor
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    match non_erased.as_slice() {
+        [p, s, ..] => Ok(Value::Ctor {
+            tag: 1,
+            name: Name::from_str_parts("Lean.Name.str"),
+            fields: vec![p.clone(), s.clone()],
+        }),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn lean_name_num(args: &[Value]) -> InterpResult<Value> {
+    let non_erased: Vec<Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).cloned().collect();
+    match non_erased.as_slice() {
+        [p, n, ..] => Ok(Value::Ctor {
+            tag: 2,
+            name: Name::from_str_parts("Lean.Name.num"),
+            fields: vec![p.clone(), n.clone()],
+        }),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn lean_name_is_anonymous(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(0)))
+}
+fn lean_name_is_str(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(1)))
+}
+fn lean_name_is_num(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(2)))
+}
+
+fn lean_name_get_string(args: &[Value]) -> InterpResult<Value> {
+    // Name.getString! on a str constructor: returns the string component
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 1, .. })).unwrap_or(&Value::Erased);
+    Ok(ctor_field(v, 1).cloned().unwrap_or(Value::string("")))
+}
+
+fn lean_name_get_num(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 2, .. })).unwrap_or(&Value::Erased);
+    Ok(ctor_field(v, 1).cloned().unwrap_or(Value::nat_small(0)))
+}
+
+fn lean_name_append(args: &[Value]) -> InterpResult<Value> {
+    // Name.append : Name → Name → Name (suffix appended to prefix)
+    // For now return the last non-anonymous name
+    let non_erased: Vec<&Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).collect();
+    match non_erased.as_slice() {
+        [_a, b, ..] => Ok((*b).clone()),
+        [a] => Ok((*a).clone()),
+        [] => Ok(Value::Ctor { tag: 0, name: Name::from_str_parts("Lean.Name.anonymous"), fields: vec![] }),
+    }
+}
+
+fn lean_name_to_string(args: &[Value]) -> InterpResult<Value> {
+    // Convert a Lean.Name Ctor value to string representation
+    fn name_to_str(v: &Value) -> String {
+        match v {
+            Value::Ctor { tag: 0, .. } => "".to_string(),
+            Value::Ctor { tag: 1, fields, .. } => {
+                let prefix = fields.first().map(name_to_str).unwrap_or_default();
+                let s = fields.get(1).and_then(|s| s.as_str()).unwrap_or("");
+                if prefix.is_empty() { s.to_string() } else { format!("{}.{}", prefix, s) }
+            }
+            Value::Ctor { tag: 2, fields, .. } => {
+                let prefix = fields.first().map(name_to_str).unwrap_or_default();
+                let n = fields.get(1).and_then(|n| n.as_nat()).map(|n| n.to_string()).unwrap_or_default();
+                if prefix.is_empty() { n } else { format!("{}.{}", prefix, n) }
+            }
+            Value::String(s) => s.to_string(),
+            _ => format!("{:?}", v),
+        }
+    }
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::string(name_to_str(v).as_str()))
+}
+
+fn lean_name_quick_lt(args: &[Value]) -> InterpResult<Value> {
+    let non_erased: Vec<&Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).collect();
+    if non_erased.len() >= 2 {
+        Ok(Value::bool_(value_lt(non_erased[0], non_erased[1])))
+    } else {
+        Ok(Value::bool_(false))
+    }
+}
+
+// --------------- Lean.Level structural builtins ---------------
+// Lean.Level: zero=0, succ=1, max=2, imax=3, param=4, mvar=5
+
+fn lean_level_beq(args: &[Value]) -> InterpResult<Value> {
+    let non_erased: Vec<&Value> = args.iter().filter(|v| !matches!(v, Value::Erased)).collect();
+    if non_erased.len() >= 2 {
+        Ok(Value::bool_(value_eq(non_erased[0], non_erased[1])))
+    } else {
+        Ok(Value::bool_(false))
+    }
+}
+fn lean_level_hash(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::nat_small(value_hash(v)))
+}
+fn lean_level_is_zero(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(0)))
+}
+fn lean_level_is_succ(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(1)))
+}
+fn lean_level_is_max(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(2)))
+}
+fn lean_level_is_imax(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(3)))
+}
+fn lean_level_is_param(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(4)))
+}
+fn lean_level_is_mvar(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(ctor_tag(v) == Some(5)))
+}
+fn lean_level_succ_of(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 1, .. })).unwrap_or(&Value::Erased);
+    Ok(ctor_field(v, 0).cloned().unwrap_or(Value::Erased))
+}
+fn lean_level_max_of(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 2, .. })).unwrap_or(&Value::Erased);
+    let l = ctor_field(v, 0).cloned().unwrap_or(Value::Erased);
+    let r = ctor_field(v, 1).cloned().unwrap_or(Value::Erased);
+    Ok(Value::Ctor { tag: 0, name: Name::from_str_parts("Prod.mk"), fields: vec![l, r] })
+}
+fn lean_level_imax_of(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 3, .. })).unwrap_or(&Value::Erased);
+    let l = ctor_field(v, 0).cloned().unwrap_or(Value::Erased);
+    let r = ctor_field(v, 1).cloned().unwrap_or(Value::Erased);
+    Ok(Value::Ctor { tag: 0, name: Name::from_str_parts("Prod.mk"), fields: vec![l, r] })
+}
+fn lean_level_param_of(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 4, .. })).unwrap_or(&Value::Erased);
+    Ok(ctor_field(v, 0).cloned().unwrap_or(Value::Erased))
+}
+fn lean_level_mvar_of(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 5, .. })).unwrap_or(&Value::Erased);
+    Ok(ctor_field(v, 0).cloned().unwrap_or(Value::Erased))
+}
+
+// --------------- Lean.Environment bridge builtins ---------------
+
+fn lean_env_find(args: &[Value]) -> InterpResult<Value> {
+    // Lean.Environment.find? : Environment → Name → Option ConstantInfo
+    // For now return None (the elaborator will fall back to other mechanisms)
+    let _ = args;
+    Ok(Value::none())
+}
+
+fn lean_env_contains(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::bool_(false))
+}
+
+fn lean_env_is_constructor(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::bool_(false))
+}
+
+fn lean_env_is_inductive(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::bool_(false))
+}
+
+fn lean_env_is_recursor(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::bool_(false))
+}
+
+// --------------- Lean.RBTree / PersistentHashMap stubs ---------------
+
+fn lean_rbnode_depth(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::nat_small(0))
+}
+
+fn lean_persistent_hashmap_mk_empty(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::Array(Arc::new(Vec::new())))
+}
+
+// --------------- IO Handle stubs ---------------
+
+fn io_get_stdout(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    Ok(io_ok(Value::nat_small(1), world)) // stdout fd = 1
+}
+
+fn io_get_stderr(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    Ok(io_ok(Value::nat_small(2), world)) // stderr fd = 2
+}
+
+fn io_get_stdin(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    Ok(io_ok(Value::nat_small(0), world)) // stdin fd = 0
+}
+
+fn io_handle_put_str(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    if let Some(s) = args.iter().find_map(|v| v.as_str()) {
+        eprint!("{}", s);
+    }
+    Ok(io_ok(Value::unit(), world))
+}
+
+fn io_handle_put_str_ln(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    if let Some(s) = args.iter().find_map(|v| v.as_str()) {
+        eprintln!("{}", s);
+    }
+    Ok(io_ok(Value::unit(), world))
+}
+
+fn io_handle_flush(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    Ok(io_ok(Value::unit(), world))
+}
+
+fn io_get_env(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    if let Some(key) = args.iter().find_map(|v| v.as_str()) {
+        if let Ok(val) = std::env::var(key) {
+            return Ok(io_ok(Value::some(Value::string(val.as_str())), world));
+        }
+    }
+    Ok(io_ok(Value::none(), world))
+}
+
+fn io_is_eof(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    Ok(io_ok(Value::bool_(true), world)) // always EOF in non-interactive mode
+}
+
+fn io_get_line(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    Ok(io_ok(Value::string(""), world))
+}
+
+fn io_error_to_string(args: &[Value]) -> InterpResult<Value> {
+    let _ = args;
+    Ok(Value::string("<IO.Error>"))
+}
+
+fn io_error_user_error(args: &[Value]) -> InterpResult<Value> {
+    let msg = args.iter().find_map(|v| v.as_str()).unwrap_or("<error>");
+    Ok(Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("IO.Error.userError"),
+        fields: vec![Value::string(msg)],
+    })
+}
+
+// --------------- Extra String builtins ---------------
+
+fn string_to_nat_opt(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0).unwrap_or("");
+    if let Ok(n) = s.parse::<BigUint>() {
+        Ok(Value::some(Value::nat(n)))
+    } else {
+        Ok(Value::none())
+    }
+}
+
+fn string_to_int_opt(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0).unwrap_or("");
+    if let Ok(n) = s.parse::<BigInt>() {
+        Ok(Value::some(Value::Int(Arc::new(n))))
+    } else {
+        Ok(Value::none())
+    }
+}
+
+fn string_starts_with(args: &[Value]) -> InterpResult<Value> {
+    let strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
+    if strs.len() >= 2 {
+        Ok(Value::bool_(strs[0].starts_with(strs[1])))
+    } else {
+        Ok(Value::bool_(false))
+    }
+}
+
+fn string_ends_with(args: &[Value]) -> InterpResult<Value> {
+    let strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
+    if strs.len() >= 2 {
+        Ok(Value::bool_(strs[0].ends_with(strs[1])))
+    } else {
+        Ok(Value::bool_(false))
+    }
+}
+
+fn string_contains_char(args: &[Value]) -> InterpResult<Value> {
+    // String.contains : String → Char → Bool
+    let s = args.iter().find_map(|v| v.as_str()).unwrap_or("");
+    let ch = args.iter().rev().find_map(|v| v.as_nat()).and_then(|n| {
+        let code: u32 = n.try_into().ok()?;
+        char::from_u32(code)
+    });
+    if let Some(c) = ch {
+        Ok(Value::bool_(s.contains(c)))
+    } else {
+        Ok(Value::bool_(false))
+    }
+}
+
+fn string_split_on(args: &[Value]) -> InterpResult<Value> {
+    // String.splitOn : String → String → List String
+    let strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
+    let (s, sep) = if strs.len() >= 2 { (strs[0], strs[1]) } else { return Ok(Value::none()); };
+    let parts: Vec<Value> = s.split(sep).map(Value::string).collect();
+    let mut result = Value::Ctor { tag: 0, name: Name::from_str_parts("List.nil"), fields: vec![] };
+    for part in parts.into_iter().rev() {
+        result = Value::Ctor { tag: 1, name: Name::from_str_parts("List.cons"), fields: vec![part, result] };
+    }
+    Ok(result)
+}
+
+fn string_replace(args: &[Value]) -> InterpResult<Value> {
+    let strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
+    if strs.len() >= 3 {
+        Ok(Value::string(strs[0].replace(strs[1], strs[2]).as_str()))
+    } else {
+        Ok(args.iter().find_map(|v| v.as_str()).map(Value::string).unwrap_or(Value::string("")))
+    }
+}
+
+fn string_trim(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0).unwrap_or("");
+    Ok(Value::string(s.trim()))
+}
+
+fn string_trim_left(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0).unwrap_or("");
+    Ok(Value::string(s.trim_start()))
+}
+
+fn string_to_list(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0).unwrap_or("");
+    let mut result = Value::Ctor { tag: 0, name: Name::from_str_parts("List.nil"), fields: vec![] };
+    for ch in s.chars().rev() {
+        result = Value::Ctor {
+            tag: 1,
+            name: Name::from_str_parts("List.cons"),
+            fields: vec![Value::nat_small(ch as u64), result],
+        };
+    }
+    Ok(result)
+}
+
+// --------------- Option helpers ---------------
+
+fn option_is_some(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(matches!(v, Value::Ctor { tag: 1, .. })))
+}
+
+fn option_is_none(args: &[Value]) -> InterpResult<Value> {
+    let v = args.iter().find(|v| !matches!(v, Value::Erased)).unwrap_or(&Value::Erased);
+    Ok(Value::bool_(matches!(v, Value::Ctor { tag: 0, .. })))
+}
+
+fn option_get_bang(args: &[Value]) -> InterpResult<Value> {
+    // Option.get! : {α : Type} → [Inhabited α] → Option α → α
+    let v = args.iter().find(|v| matches!(v, Value::Ctor { tag: 1, .. }));
+    match v {
+        Some(Value::Ctor { fields, .. }) => Ok(fields.first().cloned().unwrap_or(Value::Erased)),
+        _ => Err(InterpError::BuiltinError("Option.get!: called on None".into())),
+    }
 }

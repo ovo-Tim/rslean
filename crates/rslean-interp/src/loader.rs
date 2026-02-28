@@ -104,3 +104,11 @@ pub fn load_module_env(module_name: &str) -> Option<Environment> {
     let path = resolve_module(&name, &search_paths)?;
     load_env_with_deps(&path, &search_paths)
 }
+
+/// Load the full Init library (Init.* and all transitive deps) by loading the top-level `Init` module.
+///
+/// The top-level `Init` module imports all sub-modules, so this transitively
+/// loads Init.Prelude, Init.Data.*, Init.System.*, etc.
+pub fn load_all_init_modules() -> Option<Environment> {
+    load_module_env("Init")
+}

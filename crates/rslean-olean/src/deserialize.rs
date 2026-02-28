@@ -258,49 +258,12 @@ impl<'a> Deserializer<'a> {
                         let levels = self.deser_list(levels_ref, |d, r| Ok(d.deser_level(r)))?;
                         Expr::const_(name, levels)
                     }
-                    5 => {
-                        // app(fn, arg)
-                        let fn_ref = self.region.ctor_obj_field(pos, 0);
-                        let arg_ref = self.region.ctor_obj_field(pos, 1);
-                        let f = self.deser_expr(fn_ref)?;
-                        let a = self.deser_expr(arg_ref)?;
-                        Expr::app(f, a)
-                    }
-                    6 => {
-                        // lam(name, type, body, binderInfo)
-                        let name_ref = self.region.ctor_obj_field(pos, 0);
-                        let type_ref = self.region.ctor_obj_field(pos, 1);
-                        let body_ref = self.region.ctor_obj_field(pos, 2);
-                        let bi = self.region.ctor_scalar_u8(pos, 3, 0);
-                        let name = self.deser_name(name_ref);
-                        let ty = self.deser_expr(type_ref)?;
-                        let body = self.deser_expr(body_ref)?;
-                        Expr::lam(name, ty, body, deser_binder_info(bi))
-                    }
-                    7 => {
-                        // forallE(name, type, body, binderInfo)
-                        let name_ref = self.region.ctor_obj_field(pos, 0);
-                        let type_ref = self.region.ctor_obj_field(pos, 1);
-                        let body_ref = self.region.ctor_obj_field(pos, 2);
-                        let bi = self.region.ctor_scalar_u8(pos, 3, 0);
-                        let name = self.deser_name(name_ref);
-                        let ty = self.deser_expr(type_ref)?;
-                        let body = self.deser_expr(body_ref)?;
-                        Expr::forall_e(name, ty, body, deser_binder_info(bi))
-                    }
-                    8 => {
-                        // letE(name, type, value, body, nondep)
-                        let name_ref = self.region.ctor_obj_field(pos, 0);
-                        let type_ref = self.region.ctor_obj_field(pos, 1);
-                        let val_ref = self.region.ctor_obj_field(pos, 2);
-                        let body_ref = self.region.ctor_obj_field(pos, 3);
-                        let nondep = self.region.ctor_scalar_u8(pos, 4, 0) != 0;
-                        let name = self.deser_name(name_ref);
-                        let ty = self.deser_expr(type_ref)?;
-                        let val = self.deser_expr(val_ref)?;
-                        let body = self.deser_expr(body_ref)?;
-                        Expr::let_e(name, ty, val, body, nondep)
-                    }
+                    // App, Lam, ForallE, LetE use iterative spine/chain unrolling
+                    // to avoid stack overflow on deeply nested expressions.
+                    5 => return self.deser_app_spine(pos),
+                    6 => return self.deser_lam_chain(pos),
+                    7 => return self.deser_forall_chain(pos),
+                    8 => return self.deser_let_chain(pos),
                     9 => {
                         // lit(Literal)
                         let lit_ref = self.region.ctor_obj_field(pos, 0);
@@ -317,9 +280,6 @@ impl<'a> Deserializer<'a> {
                     }
                     11 => {
                         // proj(typeName, idx, struct)
-                        // proj has 2 obj fields (typeName: Name, struct: Expr)
-                        // and idx as Nat stored in the remaining obj field
-                        // Actually: all 3 are obj fields: Name, Nat, Expr
                         let name_ref = self.region.ctor_obj_field(pos, 0);
                         let idx_ref = self.region.ctor_obj_field(pos, 1);
                         let struct_ref = self.region.ctor_obj_field(pos, 2);
@@ -339,6 +299,178 @@ impl<'a> Deserializer<'a> {
                 Ok(expr)
             }
         }
+    }
+
+    /// Iteratively deserialize a left-recursive App spine: App(App(App(f, a1), a2), a3).
+    /// Follows the fn (left) child iteratively, then rebuilds from the leaf outward.
+    fn deser_app_spine(&mut self, start_pos: usize) -> OleanResult<Expr> {
+        // Collect (pos, arg_ref) from outermost to innermost App node.
+        let mut spine: Vec<(usize, ObjRef)> = Vec::new();
+        let mut current_pos = start_pos;
+        let mut leaf_fn_ref: ObjRef;
+
+        loop {
+            let fn_ref = self.region.ctor_obj_field(current_pos, 0);
+            let arg_ref = self.region.ctor_obj_field(current_pos, 1);
+            spine.push((current_pos, arg_ref));
+
+            leaf_fn_ref = fn_ref;
+            match fn_ref {
+                ObjRef::Ptr(p) if !self.expr_cache.contains_key(&p)
+                    && self.region.obj_tag(p) == 5 =>
+                {
+                    current_pos = p;
+                }
+                _ => break,
+            }
+        }
+
+        // Deserialize the leaf fn (not an App, so bounded recursion depth).
+        let mut result = self.deser_expr(leaf_fn_ref)?;
+
+        // Rebuild from innermost to outermost, caching each intermediate node.
+        for &(pos, arg_ref) in spine.iter().rev() {
+            let arg = self.deser_expr(arg_ref)?;
+            result = Expr::app(result, arg);
+            self.expr_cache.insert(pos, result.clone());
+        }
+
+        Ok(result)
+    }
+
+    /// Iteratively deserialize a right-recursive Lam chain: λa. λb. λc. body.
+    /// Follows the body (right) child iteratively, then rebuilds from the leaf outward.
+    fn deser_lam_chain(&mut self, start_pos: usize) -> OleanResult<Expr> {
+        struct Binder {
+            pos: usize,
+            name: Name,
+            type_ref: ObjRef,
+            bi: u8,
+        }
+        let mut binders: Vec<Binder> = Vec::new();
+        let mut current_pos = start_pos;
+        let mut leaf_body_ref: ObjRef;
+
+        loop {
+            let name_ref = self.region.ctor_obj_field(current_pos, 0);
+            let type_ref = self.region.ctor_obj_field(current_pos, 1);
+            let body_ref = self.region.ctor_obj_field(current_pos, 2);
+            let bi = self.region.ctor_scalar_u8(current_pos, 3, 0);
+            let name = self.deser_name(name_ref);
+
+            binders.push(Binder { pos: current_pos, name, type_ref, bi });
+
+            leaf_body_ref = body_ref;
+            match body_ref {
+                ObjRef::Ptr(p) if !self.expr_cache.contains_key(&p)
+                    && self.region.obj_tag(p) == 6 =>
+                {
+                    current_pos = p;
+                }
+                _ => break,
+            }
+        }
+
+        // Deserialize the innermost body (not a Lam).
+        let mut result = self.deser_expr(leaf_body_ref)?;
+
+        // Rebuild from innermost to outermost.
+        for binder in binders.into_iter().rev() {
+            let ty = self.deser_expr(binder.type_ref)?;
+            result = Expr::lam(binder.name, ty, result, deser_binder_info(binder.bi));
+            self.expr_cache.insert(binder.pos, result.clone());
+        }
+
+        Ok(result)
+    }
+
+    /// Iteratively deserialize a right-recursive ForallE chain: ∀a. ∀b. body.
+    fn deser_forall_chain(&mut self, start_pos: usize) -> OleanResult<Expr> {
+        struct Binder {
+            pos: usize,
+            name: Name,
+            type_ref: ObjRef,
+            bi: u8,
+        }
+        let mut binders: Vec<Binder> = Vec::new();
+        let mut current_pos = start_pos;
+        let mut leaf_body_ref: ObjRef;
+
+        loop {
+            let name_ref = self.region.ctor_obj_field(current_pos, 0);
+            let type_ref = self.region.ctor_obj_field(current_pos, 1);
+            let body_ref = self.region.ctor_obj_field(current_pos, 2);
+            let bi = self.region.ctor_scalar_u8(current_pos, 3, 0);
+            let name = self.deser_name(name_ref);
+
+            binders.push(Binder { pos: current_pos, name, type_ref, bi });
+
+            leaf_body_ref = body_ref;
+            match body_ref {
+                ObjRef::Ptr(p) if !self.expr_cache.contains_key(&p)
+                    && self.region.obj_tag(p) == 7 =>
+                {
+                    current_pos = p;
+                }
+                _ => break,
+            }
+        }
+
+        let mut result = self.deser_expr(leaf_body_ref)?;
+
+        for binder in binders.into_iter().rev() {
+            let ty = self.deser_expr(binder.type_ref)?;
+            result = Expr::forall_e(binder.name, ty, result, deser_binder_info(binder.bi));
+            self.expr_cache.insert(binder.pos, result.clone());
+        }
+
+        Ok(result)
+    }
+
+    /// Iteratively deserialize a right-recursive LetE chain: let a := x in let b := y in body.
+    fn deser_let_chain(&mut self, start_pos: usize) -> OleanResult<Expr> {
+        struct LetBinder {
+            pos: usize,
+            name: Name,
+            type_ref: ObjRef,
+            val_ref: ObjRef,
+            nondep: bool,
+        }
+        let mut binders: Vec<LetBinder> = Vec::new();
+        let mut current_pos = start_pos;
+        let mut leaf_body_ref: ObjRef;
+
+        loop {
+            let name_ref = self.region.ctor_obj_field(current_pos, 0);
+            let type_ref = self.region.ctor_obj_field(current_pos, 1);
+            let val_ref = self.region.ctor_obj_field(current_pos, 2);
+            let body_ref = self.region.ctor_obj_field(current_pos, 3);
+            let nondep = self.region.ctor_scalar_u8(current_pos, 4, 0) != 0;
+            let name = self.deser_name(name_ref);
+
+            binders.push(LetBinder { pos: current_pos, name, type_ref, val_ref, nondep });
+
+            leaf_body_ref = body_ref;
+            match body_ref {
+                ObjRef::Ptr(p) if !self.expr_cache.contains_key(&p)
+                    && self.region.obj_tag(p) == 8 =>
+                {
+                    current_pos = p;
+                }
+                _ => break,
+            }
+        }
+
+        let mut result = self.deser_expr(leaf_body_ref)?;
+
+        for binder in binders.into_iter().rev() {
+            let ty = self.deser_expr(binder.type_ref)?;
+            let val = self.deser_expr(binder.val_ref)?;
+            result = Expr::let_e(binder.name, ty, val, result, binder.nondep);
+            self.expr_cache.insert(binder.pos, result.clone());
+        }
+
+        Ok(result)
     }
 
     // ─── Literal ────────────────────────────────────────────────────────
