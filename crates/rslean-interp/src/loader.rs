@@ -112,3 +112,62 @@ pub fn load_module_env(module_name: &str) -> Option<Environment> {
 pub fn load_all_init_modules() -> Option<Environment> {
     load_module_env("Init")
 }
+
+/// Load the full Lean compiler library (Lean.* and all transitive deps including Init.*).
+///
+/// This loads the top-level `Lean` module which transitively imports everything
+/// needed for the elaborator, tactics, meta framework, etc.
+pub fn load_lean_library() -> Option<Environment> {
+    load_module_env("Lean")
+}
+
+/// Load multiple named modules and all their transitive dependencies into one Environment.
+pub fn load_modules_env(module_names: &[&str]) -> Option<Environment> {
+    let lib_dir = find_lean_lib_dir()?;
+    let search_paths = vec![lib_dir.join("library"), lib_dir.clone()];
+
+    // Resolve all root modules
+    let mut root_paths = Vec::new();
+    for name_str in module_names {
+        let name = Name::from_str_parts(name_str);
+        let path = resolve_module(&name, &search_paths)?;
+        root_paths.push(path);
+    }
+
+    // BFS from all roots
+    let mut loaded: HashMap<String, Vec<ConstantInfo>> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut queue: VecDeque<PathBuf> = VecDeque::new();
+
+    for p in root_paths {
+        queue.push_back(p);
+    }
+
+    while let Some(path) = queue.pop_front() {
+        let path_key = path.to_string_lossy().to_string();
+        if loaded.contains_key(&path_key) {
+            continue;
+        }
+
+        let (_, data) = rslean_olean::load_module(&path).ok()?;
+
+        for imp in &data.imports {
+            if let Some(imp_path) = resolve_module(&imp.module, &search_paths) {
+                queue.push_back(imp_path);
+            }
+        }
+
+        loaded.insert(path_key.clone(), data.constants);
+        order.push(path_key);
+    }
+
+    let mut env = Environment::new();
+    for key in &order {
+        if let Some(constants) = loaded.get(key) {
+            for ci in constants {
+                env = env.add_constant_unchecked(ci.clone());
+            }
+        }
+    }
+    Some(env)
+}

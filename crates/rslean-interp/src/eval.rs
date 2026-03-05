@@ -11,7 +11,7 @@ use crate::error::{InterpError, InterpResult};
 use crate::iota;
 use crate::value::{FuncRef, Value};
 
-const MAX_EVAL_DEPTH: u32 = 256;
+const MAX_EVAL_DEPTH: u32 = 512;
 
 /// The tree-walking interpreter for Lean 4 kernel expressions.
 pub struct Interpreter {
@@ -37,6 +37,23 @@ impl Interpreter {
         &self.env
     }
 
+    /// Detect compiler-generated auxiliary constants that should be erased.
+    /// These include `_cstage2`, `_closed_N`, `_lambda_N`, `_neutral`, `_rarg`.
+    pub(crate) fn is_compiler_aux(name: &Name) -> bool {
+        if name.is_str() {
+            let s = name.get_string();
+            return s == "_cstage1" || s == "_cstage2" || s == "_neutral" || s == "_rarg";
+        }
+        if name.is_num() {
+            let prefix = name.get_prefix();
+            if prefix.is_str() {
+                let s = prefix.get_string();
+                return s == "_closed" || s == "_lambda";
+            }
+        }
+        false
+    }
+
     /// Evaluate an expression to a value.
     pub fn eval(&mut self, expr: &Expr, local_env: &LocalEnv) -> InterpResult<Value> {
         self.eval_depth += 1;
@@ -53,13 +70,11 @@ impl Interpreter {
         match expr.kind() {
             ExprKind::Lit(lit) => self.eval_lit(lit),
             ExprKind::BVar(idx) => local_env.lookup(*idx).cloned(),
-            ExprKind::Lam(_name, _ty, body, _bi) => {
-                Ok(Value::Closure {
-                    func: FuncRef::Lambda(body.clone(), local_env.clone()),
-                    captured: vec![],
-                    remaining_arity: 1,
-                })
-            }
+            ExprKind::Lam(_name, _ty, body, _bi) => Ok(Value::Closure {
+                func: FuncRef::Lambda(body.clone(), local_env.clone()),
+                captured: vec![],
+                remaining_arity: 1,
+            }),
             ExprKind::LetE(_name, _ty, val, body, _non_dep) => {
                 let v = self.eval(val, local_env)?;
                 let new_env = local_env.push(v);
@@ -70,22 +85,14 @@ impl Interpreter {
                 let av = self.eval(a, local_env)?;
                 self.apply(fv, av)
             }
-            ExprKind::Const(name, levels) => {
-                self.eval_const(name, levels)
-            }
-            ExprKind::ForallE(..) | ExprKind::Sort(_) | ExprKind::MVar(_) => {
-                Ok(Value::Erased)
-            }
-            ExprKind::MData(_md, e) => {
-                self.eval(e, local_env)
-            }
+            ExprKind::Const(name, levels) => self.eval_const(name, levels),
+            ExprKind::ForallE(..) | ExprKind::Sort(_) | ExprKind::MVar(_) => Ok(Value::Erased),
+            ExprKind::MData(_md, e) => self.eval(e, local_env),
             ExprKind::Proj(struct_name, idx, e) => {
                 let v = self.eval(e, local_env)?;
                 self.eval_proj(struct_name, *idx, v)
             }
-            ExprKind::FVar(_) => {
-                Ok(Value::KernelExpr(expr.clone()))
-            }
+            ExprKind::FVar(_) => Ok(Value::KernelExpr(expr.clone())),
         }
     }
 
@@ -103,6 +110,10 @@ impl Interpreter {
             return self.make_builtin_closure(name);
         }
 
+        if Self::is_compiler_aux(name) {
+            return Ok(Value::Erased);
+        }
+
         // Check cache (only for level-monomorphic constants)
         if levels.is_empty() || levels.iter().all(|l| l.is_explicit()) {
             if let Some(cached) = self.const_cache.get(name) {
@@ -113,19 +124,17 @@ impl Interpreter {
         let info = self.env.get(name)?.clone();
         let val = self.eval_const_info(&info, levels)?;
 
-        // Cache if appropriate
-        if levels.is_empty() || levels.iter().all(|l| l.is_explicit()) {
+        // Cache if appropriate (limit cache size to avoid OOM)
+        if (levels.is_empty() || levels.iter().all(|l| l.is_explicit()))
+            && self.const_cache.len() < 10_000
+        {
             self.const_cache.insert(name.clone(), val.clone());
         }
 
         Ok(val)
     }
 
-    fn eval_const_info(
-        &mut self,
-        info: &ConstantInfo,
-        levels: &[Level],
-    ) -> InterpResult<Value> {
+    fn eval_const_info(&mut self, info: &ConstantInfo, levels: &[Level]) -> InterpResult<Value> {
         match info {
             ConstantInfo::Definition {
                 level_params,
@@ -186,9 +195,7 @@ impl Interpreter {
                 })
             }
 
-            ConstantInfo::Inductive { .. } => {
-                Ok(Value::Erased)
-            }
+            ConstantInfo::Inductive { .. } => Ok(Value::Erased),
 
             ConstantInfo::Axiom { .. }
             | ConstantInfo::Opaque { .. }
@@ -240,7 +247,11 @@ impl Interpreter {
                 break;
             }
 
-            if arity == 0 { 1 } else { arity }
+            if arity == 0 {
+                1
+            } else {
+                arity
+            }
         } else {
             // Fallback: arity 1
             1
@@ -265,9 +276,8 @@ impl Interpreter {
     fn is_function_type_alias(&self, name: &Name) -> bool {
         // Known Lean 4 monadic type aliases that expand to functions
         static ALIASES: &[&str] = &[
-            "ST", "EST", "EIO", "BaseIO", "IO",
-            "ST'", "EST'",
-            "StateM", "ReaderT", "StateT", "ExceptT",
+            "ST", "EST", "EIO", "BaseIO", "IO", "ST'", "EST'", "StateM", "ReaderT", "StateT",
+            "ExceptT",
         ];
         let name_str = name.to_string();
         ALIASES.iter().any(|a| name_str == *a)
@@ -293,7 +303,11 @@ impl Interpreter {
         // Look up the definition
         let info = self.env.find(name)?;
         let (level_params, value) = match info {
-            ConstantInfo::Definition { level_params, value, .. } => (level_params, value),
+            ConstantInfo::Definition {
+                level_params,
+                value,
+                ..
+            } => (level_params, value),
             _ => return None,
         };
 
@@ -379,7 +393,15 @@ impl Interpreter {
                     .get(&name)
                     .copied()
                     .ok_or_else(|| InterpError::UnknownConstant(name.clone()))?;
-                builtin_fn(&args)
+                match builtin_fn(&args) {
+                    Ok(v) => Ok(v),
+                    Err(InterpError::BuiltinError(_))
+                        if args.iter().any(|v| matches!(v, Value::Erased)) =>
+                    {
+                        Ok(Value::Erased)
+                    }
+                    Err(e) => Err(e),
+                }
             }
             FuncRef::CtorFn {
                 name,
@@ -404,9 +426,67 @@ impl Interpreter {
                 }
                 Ok(Value::Ctor { tag, name, fields })
             }
-            FuncRef::RecursorFn(name, levels) => {
-                iota::apply_recursor(self, &name, &levels, args)
+            FuncRef::RecursorFn(name, levels) => iota::apply_recursor(self, &name, &levels, args),
+        }
+    }
+
+    /// Calls `Lean.Elab.process : String → Environment → Options → Option String → IO (Environment × MessageLog)`
+    /// from the loaded .olean environment. Returns `(env, message_log)` as raw Values.
+    pub fn process_lean_input(
+        &mut self,
+        input: &str,
+        file_name: &str,
+    ) -> InterpResult<(Value, Value)> {
+        let process_fn = self.eval_const(&Name::from_str_parts("Lean.Elab.process"), &[])?;
+
+        let input_val = Value::String(Arc::from(input));
+        let env_val = Value::Environment(Arc::new(self.env.clone()));
+        // Options = Lean.KVMap; empty = first ctor (tag 0, no fields)
+        let opts_val = Value::Ctor {
+            tag: 0,
+            name: Name::from_str_parts("Lean.KVMap.empty"),
+            fields: vec![],
+        };
+        let filename_val = Value::some(Value::String(Arc::from(file_name)));
+
+        let result = self.apply(process_fn, input_val)?;
+        let result = self.apply(result, env_val)?;
+        let result = self.apply(result, opts_val)?;
+        let result = self.apply(result, filename_val)?;
+        // World token for IO
+        let result = self.apply(result, Value::Erased)?;
+
+        // EStateM.Result: tag 0 = ok(value, world), tag 1 = error(err, world)
+        match result {
+            Value::Ctor { tag: 0, fields, .. } => {
+                if fields.is_empty() {
+                    return Err(InterpError::TypeError(
+                        "EStateM.Result.ok has no fields".to_string(),
+                    ));
+                }
+                // fields[0] = Prod.mk env messages
+                let pair = &fields[0];
+                match pair {
+                    Value::Ctor {
+                        fields: pair_fields,
+                        ..
+                    } if pair_fields.len() >= 2 => {
+                        Ok((pair_fields[0].clone(), pair_fields[1].clone()))
+                    }
+                    _ => Ok((pair.clone(), Value::Erased)),
+                }
             }
+            Value::Ctor { tag: 1, fields, .. } => {
+                let err = fields.first().cloned().unwrap_or(Value::Erased);
+                Err(InterpError::TypeError(format!(
+                    "Lean.Elab.process returned IO error: {:?}",
+                    err
+                )))
+            }
+            _ => Err(InterpError::TypeError(format!(
+                "Lean.Elab.process returned unexpected value: {:?}",
+                result
+            ))),
         }
     }
 
@@ -414,15 +494,22 @@ impl Interpreter {
     fn eval_proj(&self, struct_name: &Name, idx: u64, val: Value) -> InterpResult<Value> {
         match val {
             Value::Ctor { fields, .. } => {
-                fields.get(idx as usize).cloned().ok_or_else(|| {
-                    InterpError::ProjOutOfRange {
+                fields
+                    .get(idx as usize)
+                    .cloned()
+                    .ok_or_else(|| InterpError::ProjOutOfRange {
                         struct_name: struct_name.clone(),
                         idx,
                         num_fields: fields.len(),
-                    }
-                })
+                    })
             }
             Value::Erased => Ok(Value::Erased),
+            // Char is stored as bare Nat but Char.mk wraps a UInt32.
+            // Char.0 projects the underlying Nat code point.
+            // Subtype.0 projects the value; USize.size is stored as bare Nat(64).
+            // In both cases, field 0 is the Nat itself, field 1 is erased proof.
+            Value::Nat(_) if idx == 0 => Ok(val),
+            Value::Nat(_) if idx == 1 => Ok(Value::Erased), // proof field
             _ => Err(InterpError::TypeError(format!(
                 "projection {}.{} on non-constructor value: {:?}",
                 struct_name, idx, val

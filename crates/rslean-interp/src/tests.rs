@@ -31,8 +31,14 @@ fn test_local_env_push_lookup() {
     let env = env.push(Value::nat_small(99));
     assert_eq!(env.len(), 2);
     // Index 0 is the most recently pushed
-    assert_eq!(*env.lookup(0).unwrap().as_nat().unwrap(), BigUint::from(99u64));
-    assert_eq!(*env.lookup(1).unwrap().as_nat().unwrap(), BigUint::from(42u64));
+    assert_eq!(
+        *env.lookup(0).unwrap().as_nat().unwrap(),
+        BigUint::from(99u64)
+    );
+    assert_eq!(
+        *env.lookup(1).unwrap().as_nat().unwrap(),
+        BigUint::from(42u64)
+    );
 }
 
 #[test]
@@ -118,7 +124,12 @@ fn test_eval_identity() {
     // (fun x : Nat => x) 42  →  42
     let mut interp = make_interp();
     let body = Expr::bvar(0);
-    let lam = Expr::lam(Name::mk_simple("x"), Expr::type_(), body, BinderInfo::Default);
+    let lam = Expr::lam(
+        Name::mk_simple("x"),
+        Expr::type_(),
+        body,
+        BinderInfo::Default,
+    );
     let app = Expr::app(lam, Expr::lit(Literal::nat_small(42)));
     let val = interp.eval(&app, &LocalEnv::new()).unwrap();
     assert_eq!(*val.as_nat().unwrap(), BigUint::from(42u64));
@@ -269,7 +280,7 @@ fn test_eval_definition_id() {
     let app = Expr::mk_app(
         id_const,
         &[
-            Expr::type_(),          // α = Nat (erased, but we pass Type as placeholder)
+            Expr::type_(), // α = Nat (erased, but we pass Type as placeholder)
             Expr::lit(Literal::nat_small(42)),
         ],
     );
@@ -322,8 +333,8 @@ fn test_eval_constructor() {
     let app = Expr::mk_app(
         mk,
         &[
-            Expr::type_(),                   // α
-            Expr::type_(),                   // β
+            Expr::type_(),                    // α
+            Expr::type_(),                    // β
             Expr::lit(Literal::nat_small(3)), // fst
             Expr::lit(Literal::nat_small(7)), // snd
         ],
@@ -446,11 +457,14 @@ fn env_with_bool_rec() -> Environment {
                 num_fields: 0,
                 // fun motive => fun false_case => fun true_case => false_case (#1)
                 rhs: Expr::lam(
-                    Name::mk_simple("m"), Expr::type_(),
+                    Name::mk_simple("m"),
+                    Expr::type_(),
                     Expr::lam(
-                        Name::mk_simple("f"), Expr::type_(),
+                        Name::mk_simple("f"),
+                        Expr::type_(),
                         Expr::lam(
-                            Name::mk_simple("t"), Expr::type_(),
+                            Name::mk_simple("t"),
+                            Expr::type_(),
                             Expr::bvar(1), // false_case
                             BinderInfo::Default,
                         ),
@@ -464,11 +478,14 @@ fn env_with_bool_rec() -> Environment {
                 num_fields: 0,
                 // fun motive => fun false_case => fun true_case => true_case (#0)
                 rhs: Expr::lam(
-                    Name::mk_simple("m"), Expr::type_(),
+                    Name::mk_simple("m"),
+                    Expr::type_(),
                     Expr::lam(
-                        Name::mk_simple("f"), Expr::type_(),
+                        Name::mk_simple("f"),
+                        Expr::type_(),
                         Expr::lam(
-                            Name::mk_simple("t"), Expr::type_(),
+                            Name::mk_simple("t"),
+                            Expr::type_(),
                             Expr::bvar(0), // true_case
                             BinderInfo::Default,
                         ),
@@ -494,9 +511,9 @@ fn test_eval_bool_rec_true() {
     let app = Expr::mk_app(
         rec,
         &[
-            Expr::type_(),                    // motive (erased)
-            Expr::lit(Literal::nat_small(10)), // false case
-            Expr::lit(Literal::nat_small(20)), // true case
+            Expr::type_(),                                           // motive (erased)
+            Expr::lit(Literal::nat_small(10)),                       // false case
+            Expr::lit(Literal::nat_small(20)),                       // true case
             Expr::const_(Name::from_str_parts("Bool.true"), vec![]), // major
         ],
     );
@@ -904,7 +921,11 @@ fn test_eval_zero_arity_ctor() {
     let expr = Expr::const_(Name::from_str_parts("Bool.true"), vec![]);
     let val = interp.eval(&expr, &LocalEnv::new()).unwrap();
     match &val {
-        Value::Ctor { tag: 1, name, fields } => {
+        Value::Ctor {
+            tag: 1,
+            name,
+            fields,
+        } => {
             assert_eq!(name, &Name::from_str_parts("Bool.true"));
             assert!(fields.is_empty());
         }
@@ -916,28 +937,36 @@ fn test_eval_zero_arity_ctor() {
 
 #[test]
 fn test_stack_overflow_protection() {
-    // Create a self-referencing definition that would loop forever
-    let env = Environment::new();
-    let env = env
-        .add_constant(ConstantInfo::Definition {
-            name: Name::mk_simple("loop"),
-            level_params: vec![],
-            type_: Expr::type_(),
-            value: Expr::const_(Name::mk_simple("loop"), vec![]), // self-reference
-            hints: ReducibilityHints::Regular(0),
-            safety: DefinitionSafety::Safe,
+    // Create a self-referencing definition that would loop forever.
+    // Run in a thread with a large stack because MAX_EVAL_DEPTH=512
+    // causes deep recursion that can overflow the default test stack in debug mode.
+    let builder = std::thread::Builder::new().stack_size(32 * 1024 * 1024); // 32 MB
+    let handler = builder
+        .spawn(|| {
+            let env = Environment::new();
+            let env = env
+                .add_constant(ConstantInfo::Definition {
+                    name: Name::mk_simple("loop"),
+                    level_params: vec![],
+                    type_: Expr::type_(),
+                    value: Expr::const_(Name::mk_simple("loop"), vec![]), // self-reference
+                    hints: ReducibilityHints::Regular(0),
+                    safety: DefinitionSafety::Safe,
+                })
+                .unwrap();
+            let mut interp = Interpreter::new(env);
+            let result = interp.eval(
+                &Expr::const_(Name::mk_simple("loop"), vec![]),
+                &LocalEnv::new(),
+            );
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                crate::error::InterpError::StackOverflow(_) => {}
+                e => panic!("expected StackOverflow, got {:?}", e),
+            }
         })
-        .unwrap();
-    let mut interp = Interpreter::new(env);
-    let result = interp.eval(
-        &Expr::const_(Name::mk_simple("loop"), vec![]),
-        &LocalEnv::new(),
-    );
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        crate::error::InterpError::StackOverflow(_) => {}
-        e => panic!("expected StackOverflow, got {:?}", e),
-    }
+        .expect("failed to spawn test thread");
+    handler.join().expect("test thread panicked");
 }
 
 // ====================== Partial application ======================
@@ -1137,11 +1166,14 @@ fn env_with_nat_rec() -> Environment {
                 num_fields: 0,
                 // fun m => fun z => fun s => z (#1)
                 rhs: Expr::lam(
-                    Name::mk_simple("m"), Expr::type_(),
+                    Name::mk_simple("m"),
+                    Expr::type_(),
                     Expr::lam(
-                        Name::mk_simple("z"), Expr::type_(),
+                        Name::mk_simple("z"),
+                        Expr::type_(),
                         Expr::lam(
-                            Name::mk_simple("s"), Expr::type_(),
+                            Name::mk_simple("s"),
+                            Expr::type_(),
                             Expr::bvar(1), // z
                             BinderInfo::Default,
                         ),
@@ -1157,13 +1189,17 @@ fn env_with_nat_rec() -> Environment {
                 // Inside: s = #1, n = #0, m = #3, z = #2
                 // Nat.rec.{u} m z s n is the recursive call for IH
                 rhs: Expr::lam(
-                    Name::mk_simple("m"), Expr::type_(),
+                    Name::mk_simple("m"),
+                    Expr::type_(),
                     Expr::lam(
-                        Name::mk_simple("z"), Expr::type_(),
+                        Name::mk_simple("z"),
+                        Expr::type_(),
                         Expr::lam(
-                            Name::mk_simple("s"), Expr::type_(),
+                            Name::mk_simple("s"),
+                            Expr::type_(),
                             Expr::lam(
-                                Name::mk_simple("n"), Expr::type_(),
+                                Name::mk_simple("n"),
+                                Expr::type_(),
                                 // s n (Nat.rec.{u} m z s n)
                                 Expr::app(
                                     Expr::app(Expr::bvar(1), Expr::bvar(0)),
@@ -1207,9 +1243,9 @@ fn test_eval_nat_rec_zero() {
     let app = Expr::mk_app(
         rec,
         &[
-            Expr::type_(),                                         // motive
+            Expr::type_(),                                          // motive
             Expr::lit(Literal::nat_small(42)),                      // zero case
-            Expr::type_(),                                         // succ case (unused)
+            Expr::type_(),                                          // succ case (unused)
             Expr::const_(Name::from_str_parts("Nat.zero"), vec![]), // major = 0
         ],
     );
@@ -1426,10 +1462,7 @@ fn test_builtin_array_mk_empty_and_push() {
 
     // Create empty array
     let mk_empty = Expr::const_(Name::from_str_parts("Array.mkEmpty"), vec![]);
-    let empty = Expr::mk_app(
-        mk_empty,
-        &[Expr::type_(), Expr::lit(Literal::nat_small(0))],
-    );
+    let empty = Expr::mk_app(mk_empty, &[Expr::type_(), Expr::lit(Literal::nat_small(0))]);
     let arr_val = interp.eval(&empty, &LocalEnv::new()).unwrap();
     match &arr_val {
         Value::Array(a) => assert!(a.is_empty()),
@@ -1483,13 +1516,17 @@ fn test_builtin_st_ref() {
     // Helper to build a 4-arity type: {σ} → {α} → val → world → result
     let mk_st_type_4 = || {
         Expr::forall_e(
-            Name::anonymous(), Expr::type_(),
+            Name::anonymous(),
+            Expr::type_(),
             Expr::forall_e(
-                Name::anonymous(), Expr::type_(),
+                Name::anonymous(),
+                Expr::type_(),
                 Expr::forall_e(
-                    Name::anonymous(), Expr::type_(),
+                    Name::anonymous(),
+                    Expr::type_(),
                     Expr::forall_e(
-                        Name::anonymous(), Expr::type_(),
+                        Name::anonymous(),
+                        Expr::type_(),
                         Expr::type_(),
                         BinderInfo::Default,
                     ),
@@ -1524,15 +1561,20 @@ fn test_builtin_st_ref() {
             name: Name::from_str_parts("ST.Ref.set"),
             level_params: vec![],
             type_: Expr::forall_e(
-                Name::anonymous(), Expr::type_(),
+                Name::anonymous(),
+                Expr::type_(),
                 Expr::forall_e(
-                    Name::anonymous(), Expr::type_(),
+                    Name::anonymous(),
+                    Expr::type_(),
                     Expr::forall_e(
-                        Name::anonymous(), Expr::type_(),
+                        Name::anonymous(),
+                        Expr::type_(),
                         Expr::forall_e(
-                            Name::anonymous(), Expr::type_(),
+                            Name::anonymous(),
+                            Expr::type_(),
                             Expr::forall_e(
-                                Name::anonymous(), Expr::type_(),
+                                Name::anonymous(),
+                                Expr::type_(),
                                 Expr::type_(),
                                 BinderInfo::Default,
                             ),
@@ -1575,10 +1617,13 @@ fn test_builtin_st_ref() {
     // Get the value using the builtin directly
     use crate::builtins::BuiltinFn;
     let get_fn: BuiltinFn = |args: &[Value]| {
-        let r = args.iter().find_map(|v| match v {
-            Value::Ref(r) => Some(r.as_ref()),
-            _ => None,
-        }).ok_or_else(|| InterpError::BuiltinError("no ref".into()))?;
+        let r = args
+            .iter()
+            .find_map(|v| match v {
+                Value::Ref(r) => Some(r.as_ref()),
+                _ => None,
+            })
+            .ok_or_else(|| InterpError::BuiltinError("no ref".into()))?;
         Ok(r.borrow().clone())
     };
     let got = get_fn(&[Value::Erased, Value::Erased, ref_val.clone()]).unwrap();
@@ -1679,10 +1724,7 @@ fn test_olean_bool_not() {
     let mut interp = Interpreter::new(env);
 
     let not = Expr::const_(Name::from_str_parts("Bool.not"), vec![]);
-    let app = Expr::app(
-        not,
-        Expr::const_(Name::from_str_parts("Bool.true"), vec![]),
-    );
+    let app = Expr::app(not, Expr::const_(Name::from_str_parts("Bool.true"), vec![]));
     let val = interp.eval(&app, &LocalEnv::new()).unwrap();
     assert_eq!(val.as_bool(), Some(false));
 }
@@ -1748,7 +1790,11 @@ fn test_olean_string_length() {
     let mut interp = Interpreter::new(env);
 
     // Check if String.length exists in prelude
-    if interp.env().find(&Name::from_str_parts("String.length")).is_none() {
+    if interp
+        .env()
+        .find(&Name::from_str_parts("String.length"))
+        .is_none()
+    {
         eprintln!("Skipping: String.length not in prelude");
         return;
     }
@@ -1775,8 +1821,8 @@ fn test_olean_id_nat() {
     let app = Expr::mk_app(
         id,
         &[
-            Expr::type_(),                      // α = Nat (type, will be erased)
-            Expr::lit(Literal::nat_small(42)),  // value
+            Expr::type_(),                     // α = Nat (type, will be erased)
+            Expr::lit(Literal::nat_small(42)), // value
         ],
     );
     let val = interp.eval(&app, &LocalEnv::new()).unwrap();
@@ -1799,7 +1845,10 @@ fn test_olean_list_map() {
 
     // Verify key definitions loaded
     assert!(
-        interp.env().find(&Name::from_str_parts("List.map")).is_some(),
+        interp
+            .env()
+            .find(&Name::from_str_parts("List.map"))
+            .is_some(),
         "List.map not found in environment"
     );
 
@@ -1827,18 +1876,29 @@ fn test_olean_list_map() {
     );
     let list = Expr::mk_app(
         Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
-        &[nat.clone(), one, Expr::mk_app(
-            Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
-            &[nat.clone(), two, Expr::mk_app(
+        &[
+            nat.clone(),
+            one,
+            Expr::mk_app(
                 Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
-                &[nat.clone(), three, nil],
-            )],
-        )],
+                &[
+                    nat.clone(),
+                    two,
+                    Expr::mk_app(
+                        Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
+                        &[nat.clone(), three, nil],
+                    ),
+                ],
+            ),
+        ],
     );
 
     // List.map Nat Nat add_one list
     let map_expr = Expr::mk_app(
-        Expr::const_(Name::from_str_parts("List.map"), vec![Level::one(), Level::one()]),
+        Expr::const_(
+            Name::from_str_parts("List.map"),
+            vec![Level::one(), Level::one()],
+        ),
         &[nat.clone(), nat, add_one, list],
     );
 
@@ -2008,13 +2068,22 @@ fn test_st_ref_monadic_convention() {
     };
     let _interp = Interpreter::new(env);
     // Directly test the builtin function
-    let args = vec![Value::Erased, Value::Erased, Value::nat_small(42), Value::Erased];
+    let args = vec![
+        Value::Erased,
+        Value::Erased,
+        Value::nat_small(42),
+        Value::Erased,
+    ];
     let result = crate::builtins::test_builtin_call("ST.Prim.mkRef", &args);
     match result {
         Ok(val) => {
             // Should be EStateM.Result.ok with a Ref inside
             match &val {
-                Value::Ctor { name, fields, tag: 0 } => {
+                Value::Ctor {
+                    name,
+                    fields,
+                    tag: 0,
+                } => {
                     assert_eq!(name.to_string(), "EStateM.Result.ok");
                     assert_eq!(fields.len(), 2);
                     assert!(matches!(&fields[0], Value::Ref(_)));
@@ -2034,7 +2103,11 @@ fn test_io_println_monadic_convention() {
     match result {
         Ok(val) => {
             match &val {
-                Value::Ctor { name, fields, tag: 0 } => {
+                Value::Ctor {
+                    name,
+                    fields,
+                    tag: 0,
+                } => {
                     assert_eq!(name.to_string(), "EStateM.Result.ok");
                     assert_eq!(fields.len(), 2);
                     // fields[0] should be Unit.unit
@@ -2055,7 +2128,13 @@ fn test_hashmap_operations() {
     assert!(matches!(&map, Value::HashMap(_)));
 
     // Insert a key-value pair
-    let insert_args = vec![Value::Erased, Value::Erased, map.clone(), Value::string("key"), Value::nat_small(42)];
+    let insert_args = vec![
+        Value::Erased,
+        Value::Erased,
+        map.clone(),
+        Value::string("key"),
+        Value::nat_small(42),
+    ];
     let map2 = crate::builtins::test_builtin_call("Lean.HashMap.insert", &insert_args).unwrap();
 
     // Check size
@@ -2064,10 +2143,19 @@ fn test_hashmap_operations() {
     assert_eq!(*size.as_nat().unwrap(), BigUint::from(1u64));
 
     // Find the key
-    let find_args = vec![Value::Erased, Value::Erased, map2.clone(), Value::string("key")];
+    let find_args = vec![
+        Value::Erased,
+        Value::Erased,
+        map2.clone(),
+        Value::string("key"),
+    ];
     let found = crate::builtins::test_builtin_call("Lean.HashMap.find?", &find_args).unwrap();
     match &found {
-        Value::Ctor { tag: 1, name, fields } => {
+        Value::Ctor {
+            tag: 1,
+            name,
+            fields,
+        } => {
             assert_eq!(name.to_string(), "Option.some");
             assert_eq!(*fields[0].as_nat().unwrap(), BigUint::from(42u64));
         }
@@ -2075,7 +2163,12 @@ fn test_hashmap_operations() {
     }
 
     // Find a missing key
-    let find_args2 = vec![Value::Erased, Value::Erased, map2.clone(), Value::string("missing")];
+    let find_args2 = vec![
+        Value::Erased,
+        Value::Erased,
+        map2.clone(),
+        Value::string("missing"),
+    ];
     let not_found = crate::builtins::test_builtin_call("Lean.HashMap.find?", &find_args2).unwrap();
     assert!(matches!(&not_found, Value::Ctor { tag: 0, .. })); // Option.none
 }
@@ -2103,14 +2196,18 @@ fn test_int_arithmetic() {
 
 #[test]
 fn test_bytearray_operations() {
-    let empty = crate::builtins::test_builtin_call("ByteArray.mkEmpty", &[Value::nat_small(0)]).unwrap();
+    let empty =
+        crate::builtins::test_builtin_call("ByteArray.mkEmpty", &[Value::nat_small(0)]).unwrap();
     assert!(matches!(&empty, Value::ByteArray(_)));
 
-    let pushed = crate::builtins::test_builtin_call("ByteArray.push", &[empty, Value::nat_small(0x42)]).unwrap();
+    let pushed =
+        crate::builtins::test_builtin_call("ByteArray.push", &[empty, Value::nat_small(0x42)])
+            .unwrap();
     let size = crate::builtins::test_builtin_call("ByteArray.size", &[pushed.clone()]).unwrap();
     assert_eq!(*size.as_nat().unwrap(), BigUint::from(1u64));
 
-    let byte = crate::builtins::test_builtin_call("ByteArray.get!", &[pushed, Value::nat_small(0)]).unwrap();
+    let byte = crate::builtins::test_builtin_call("ByteArray.get!", &[pushed, Value::nat_small(0)])
+        .unwrap();
     assert_eq!(*byte.as_nat().unwrap(), BigUint::from(0x42u64));
 }
 
@@ -2262,7 +2359,10 @@ fn test_st_ref_full_monadic() {
     // EStateM.Result.ok is the first constructor (tag 0)
     let ref_val = match &mk_result {
         Value::Ctor { tag: 0, fields, .. } => fields[0].clone(), // EStateM.Result.ok
-        _ => panic!("Expected EStateM.Result.ok from mkRef, got: {:?}", mk_result),
+        _ => panic!(
+            "Expected EStateM.Result.ok from mkRef, got: {:?}",
+            mk_result
+        ),
     };
     assert!(matches!(&ref_val, Value::Ref(_)));
 
@@ -2285,7 +2385,10 @@ fn test_st_ref_full_monadic() {
             assert!(fields[0].as_nat().is_some());
             assert_eq!(*fields[0].as_nat().unwrap(), BigUint::from(42u64));
         }
-        _ => panic!("Expected EStateM.Result.ok from Ref.get, got: {:?}", get_result),
+        _ => panic!(
+            "Expected EStateM.Result.ok from Ref.get, got: {:?}",
+            get_result
+        ),
     }
 }
 
@@ -2305,11 +2408,17 @@ fn test_lean_expr_builtins_via_eval() {
 
     // isBVar should return true (Bool.true = tag 1)
     let is_bvar = test_builtin_call("Lean.Expr.isBVar", &[bvar_ctor.clone()]).unwrap();
-    assert!(matches!(&is_bvar, Value::Ctor { tag: 1, .. }), "expected Bool.true");
+    assert!(
+        matches!(&is_bvar, Value::Ctor { tag: 1, .. }),
+        "expected Bool.true"
+    );
 
     // isFVar should return false (Bool.false = tag 0)
     let is_fvar = test_builtin_call("Lean.Expr.isFVar", &[bvar_ctor.clone()]).unwrap();
-    assert!(matches!(&is_fvar, Value::Ctor { tag: 0, .. }), "expected Bool.false");
+    assert!(
+        matches!(&is_fvar, Value::Ctor { tag: 0, .. }),
+        "expected Bool.false"
+    );
 
     // bvar! should return the index
     let got_idx = test_builtin_call("Lean.Expr.bvar!", &[bvar_ctor]).unwrap();
@@ -2336,5 +2445,701 @@ fn test_lean_name_builtins() {
 
     // isAnonymous should be true for anonymous
     let is_anon = test_builtin_call("Lean.Name.isAnonymous", &[anon]).unwrap();
-    assert!(matches!(&is_anon, Value::Ctor { tag: 1, .. }), "expected Bool.true for anonymous");
+    assert!(
+        matches!(&is_anon, Value::Ctor { tag: 1, .. }),
+        "expected Bool.true for anonymous"
+    );
+}
+
+#[test]
+fn test_expr_instantiate1() {
+    use crate::builtins::test_builtin_call;
+
+    // Build: λx. BVar(0)  — identity lambda
+    // Then instantiate1 the body (BVar(0)) with a constant "Nat"
+    let body = Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("Lean.Expr.bvar"),
+        fields: vec![Value::nat_small(0)],
+    };
+    let subst = Value::Ctor {
+        tag: 4,
+        name: Name::from_str_parts("Lean.Expr.const"),
+        fields: vec![
+            Value::Ctor {
+                tag: 1,
+                name: Name::from_str_parts("Lean.Name.str"),
+                fields: vec![
+                    Value::Ctor {
+                        tag: 0,
+                        name: Name::from_str_parts("Lean.Name.anonymous"),
+                        fields: vec![],
+                    },
+                    Value::string("Nat"),
+                ],
+            },
+            Value::Ctor {
+                tag: 0,
+                name: Name::from_str_parts("List.nil"),
+                fields: vec![],
+            },
+        ],
+    };
+
+    let result = test_builtin_call("Lean.Expr.instantiate1", &[body, subst.clone()]).unwrap();
+    // Result should be the const "Nat" (BVar(0) replaced)
+    match &result {
+        Value::Ctor { tag: 4, fields, .. } => {
+            // const(name, levels) — name should be "Nat"
+            assert!(fields.len() >= 1);
+        }
+        _ => panic!("Expected Expr.const after instantiate1, got: {:?}", result),
+    }
+}
+
+#[test]
+fn test_expr_abstract() {
+    use crate::builtins::test_builtin_call;
+
+    // Build an fvar "x", then abstract it to get BVar(0)
+    let fvar_x = Value::Ctor {
+        tag: 1,
+        name: Name::from_str_parts("Lean.Expr.fvar"),
+        fields: vec![Value::Ctor {
+            tag: 1,
+            name: Name::from_str_parts("Lean.Name.str"),
+            fields: vec![
+                Value::Ctor {
+                    tag: 0,
+                    name: Name::from_str_parts("Lean.Name.anonymous"),
+                    fields: vec![],
+                },
+                Value::string("x"),
+            ],
+        }],
+    };
+
+    // abstract the fvar away
+    let arr = Value::Array(std::sync::Arc::new(vec![fvar_x.clone()]));
+    let result = test_builtin_call("Lean.Expr.abstract", &[fvar_x, arr]).unwrap();
+    // Result should be BVar(0)
+    match &result {
+        Value::Ctor { tag: 0, fields, .. } => {
+            assert_eq!(*fields[0].as_nat().unwrap(), BigUint::from(0u64));
+        }
+        _ => panic!("Expected Expr.bvar after abstract, got: {:?}", result),
+    }
+}
+
+#[test]
+fn test_expr_lift_lower_bvars() {
+    use crate::builtins::test_builtin_call;
+
+    // Build BVar(2)
+    let bvar2 = Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("Lean.Expr.bvar"),
+        fields: vec![Value::nat_small(2)],
+    };
+
+    // Lift by 3 starting from 0 → BVar(5)
+    let lifted = test_builtin_call(
+        "Lean.Expr.liftLooseBVars",
+        &[bvar2.clone(), Value::nat_small(0), Value::nat_small(3)],
+    )
+    .unwrap();
+    match &lifted {
+        Value::Ctor { tag: 0, fields, .. } => {
+            assert_eq!(*fields[0].as_nat().unwrap(), BigUint::from(5u64));
+        }
+        _ => panic!("Expected Expr.bvar after lift, got: {:?}", lifted),
+    }
+
+    // Lower by 1 starting from 0 → BVar(1)
+    let lowered = test_builtin_call(
+        "Lean.Expr.lowerLooseBVars",
+        &[bvar2, Value::nat_small(0), Value::nat_small(1)],
+    )
+    .unwrap();
+    match &lowered {
+        Value::Ctor { tag: 0, fields, .. } => {
+            assert_eq!(*fields[0].as_nat().unwrap(), BigUint::from(1u64));
+        }
+        _ => panic!("Expected Expr.bvar after lower, got: {:?}", lowered),
+    }
+}
+
+#[test]
+fn test_expr_head_beta_real() {
+    use crate::builtins::test_builtin_call;
+
+    // Build (λx. x) applied to const "Nat": App(Lam(..., BVar(0)), Const("Nat", []))
+    let bvar0 = Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("Lean.Expr.bvar"),
+        fields: vec![Value::nat_small(0)],
+    };
+    let nat_const = Value::Ctor {
+        tag: 4,
+        name: Name::from_str_parts("Lean.Expr.const"),
+        fields: vec![
+            Value::Ctor {
+                tag: 1,
+                name: Name::from_str_parts("Lean.Name.str"),
+                fields: vec![
+                    Value::Ctor {
+                        tag: 0,
+                        name: Name::from_str_parts("Lean.Name.anonymous"),
+                        fields: vec![],
+                    },
+                    Value::string("Nat"),
+                ],
+            },
+            Value::Ctor {
+                tag: 0,
+                name: Name::from_str_parts("List.nil"),
+                fields: vec![],
+            },
+        ],
+    };
+    let lam = Value::Ctor {
+        tag: 6,
+        name: Name::from_str_parts("Lean.Expr.lam"),
+        fields: vec![
+            Value::Ctor {
+                tag: 0,
+                name: Name::from_str_parts("Lean.Name.anonymous"),
+                fields: vec![],
+            },
+            Value::Ctor {
+                tag: 0,
+                name: Name::from_str_parts("Lean.BinderInfo"),
+                fields: vec![],
+            },
+            nat_const.clone(), // type (doesn't matter for beta)
+            bvar0,             // body = BVar(0)
+        ],
+    };
+    let app = Value::Ctor {
+        tag: 5,
+        name: Name::from_str_parts("Lean.Expr.app"),
+        fields: vec![lam, nat_const.clone()],
+    };
+
+    let result = test_builtin_call("Lean.Expr.headBeta", &[app]).unwrap();
+    // Should be const "Nat" after beta reduction
+    match &result {
+        Value::Ctor { tag: 4, .. } => {} // const
+        _ => panic!("Expected Expr.const after headBeta, got: {:?}", result),
+    }
+}
+
+#[test]
+fn test_env_find_bridge() {
+    // Test that lean_env_find actually looks up constants from a real Environment
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+
+    let env_val = Value::Environment(std::sync::Arc::new(env));
+
+    // Build a Name value for "Nat.add"
+    let nat_name = Value::Ctor {
+        tag: 1,
+        name: Name::from_str_parts("Lean.Name.str"),
+        fields: vec![
+            Value::Ctor {
+                tag: 0,
+                name: Name::from_str_parts("Lean.Name.anonymous"),
+                fields: vec![],
+            },
+            Value::string("Nat"),
+        ],
+    };
+    let nat_add_name = Value::Ctor {
+        tag: 1,
+        name: Name::from_str_parts("Lean.Name.str"),
+        fields: vec![nat_name, Value::string("add")],
+    };
+
+    // Call lean_env_find
+    let result = crate::builtins::test_builtin_call(
+        "Lean.Environment.find?",
+        &[env_val.clone(), nat_add_name],
+    )
+    .unwrap();
+
+    // Should return Option.some(ConstantInfo)
+    match &result {
+        Value::Ctor { tag: 1, fields, .. } => {
+            // Option.some — fields[0] is the ConstantInfo
+            let ci = &fields[0];
+            // ConstantInfo should be a Ctor
+            assert!(
+                matches!(ci, Value::Ctor { .. }),
+                "Expected ConstantInfo Ctor, got: {:?}",
+                ci
+            );
+        }
+        _ => panic!("Expected Option.some from env.find?, got: {:?}", result),
+    }
+
+    // Also test env_contains
+    let bool_true_name = Value::Ctor {
+        tag: 1,
+        name: Name::from_str_parts("Lean.Name.str"),
+        fields: vec![
+            Value::Ctor {
+                tag: 1,
+                name: Name::from_str_parts("Lean.Name.str"),
+                fields: vec![
+                    Value::Ctor {
+                        tag: 0,
+                        name: Name::from_str_parts("Lean.Name.anonymous"),
+                        fields: vec![],
+                    },
+                    Value::string("Bool"),
+                ],
+            },
+            Value::string("true"),
+        ],
+    };
+    let contains = crate::builtins::test_builtin_call(
+        "Lean.Environment.contains",
+        &[env_val.clone(), bool_true_name],
+    )
+    .unwrap();
+    assert!(
+        matches!(&contains, Value::Ctor { tag: 1, .. }),
+        "Expected Bool.true for Bool.true"
+    );
+
+    // Test a name that doesn't exist
+    let nonexistent = Value::Ctor {
+        tag: 1,
+        name: Name::from_str_parts("Lean.Name.str"),
+        fields: vec![
+            Value::Ctor {
+                tag: 0,
+                name: Name::from_str_parts("Lean.Name.anonymous"),
+                fields: vec![],
+            },
+            Value::string("NonexistentName12345"),
+        ],
+    };
+    let not_found =
+        crate::builtins::test_builtin_call("Lean.Environment.find?", &[env_val, nonexistent])
+            .unwrap();
+    assert!(
+        matches!(&not_found, Value::Ctor { tag: 0, .. }),
+        "Expected Option.none for nonexistent"
+    );
+}
+
+#[test]
+fn test_trace_missing_builtins() {
+    // Try evaluating definitions from Init.Prelude and collect unknown builtins.
+    // This test always passes but logs which builtins are missing.
+    let env = match load_prelude_env() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+
+    let mut interp = Interpreter::new(env.clone());
+    let mut missing: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut success_count = 0;
+    let mut total_count = 0;
+
+    // Collect definitions to evaluate
+    let mut defs: Vec<rslean_expr::Expr> = Vec::new();
+    env.for_each_constant(|ci| {
+        if let rslean_expr::ConstantInfo::Definition { value, .. } = ci {
+            defs.push(value.clone());
+        }
+    });
+
+    // Try evaluating each definition value
+    for expr in &defs {
+        total_count += 1;
+        match interp.eval(expr, &crate::env::LocalEnv::new()) {
+            Ok(_) => success_count += 1,
+            Err(InterpError::UnknownConstant(n)) => {
+                missing.insert(n.to_string());
+            }
+            Err(_) => {} // other errors are fine
+        }
+    }
+
+    eprintln!("=== Missing builtin trace ===");
+    eprintln!(
+        "Evaluated {}/{} definitions successfully",
+        success_count, total_count
+    );
+    eprintln!("{} unique missing builtins:", missing.len());
+    for name in &missing {
+        eprintln!("  - {}", name);
+    }
+    eprintln!("=== End trace ===");
+    // This test always passes — it's for diagnostic purposes
+}
+
+fn is_compiler_aux_str(name: &str) -> bool {
+    name.ends_with("._cstage1")
+        || name.ends_with("._cstage2")
+        || name.ends_with("._neutral")
+        || name.ends_with("._rarg")
+        || name.contains("._closed_") && name.chars().last().map_or(false, |c| c.is_ascii_digit())
+        || name.contains("._lambda_") && name.chars().last().map_or(false, |c| c.is_ascii_digit())
+}
+
+#[test]
+#[ignore = "Heavy test: loads full Init library (~6 min). Run with: cargo test -p rslean-interp -- --ignored test_trace_missing_builtins_full_init"]
+fn test_trace_missing_builtins_full_init() {
+    // Load the FULL Init library and trace missing builtins.
+    // This reveals what's needed for the elaborator.
+    let env = match loader::load_all_init_modules() {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+
+    let mut interp = Interpreter::new(env.clone());
+    let mut missing: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut error_counts: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    let mut success_count = 0;
+    let mut total_count = 0;
+
+    // Collect definitions to evaluate
+    let mut defs: Vec<(String, rslean_expr::Expr)> = Vec::new();
+    env.for_each_constant(|ci| {
+        if let rslean_expr::ConstantInfo::Definition { name, value, .. } = ci {
+            defs.push((name.to_string(), value.clone()));
+        }
+    });
+
+    // Try evaluating each definition value
+    for (name, expr) in &defs {
+        if is_compiler_aux_str(name) {
+            continue;
+        }
+        total_count += 1;
+        match interp.eval(expr, &crate::env::LocalEnv::new()) {
+            Ok(_) => success_count += 1,
+            Err(InterpError::UnknownConstant(n)) => {
+                missing.insert(n.to_string());
+            }
+            Err(e) => {
+                let err_kind = match &e {
+                    InterpError::StackOverflow(_) => "StackOverflow".to_string(),
+                    InterpError::TypeError(msg) => format!("TypeError: {}", msg),
+                    InterpError::ArityMismatch { .. } => "ArityMismatch".to_string(),
+                    InterpError::UnboundVar(_) => "UnboundVar".to_string(),
+                    InterpError::ProjOutOfRange { .. } => "ProjOutOfRange".to_string(),
+                    InterpError::RecursorError(_) => "RecursorError".to_string(),
+                    InterpError::BuiltinError(msg) => {
+                        // Collect unique builtin error messages
+                        let short_msg = if msg.len() > 80 { &msg[..80] } else { msg };
+                        format!("BuiltinError({})", short_msg)
+                    }
+                    _ => format!("{:?}", e),
+                };
+                *error_counts.entry(err_kind).or_insert(0) += 1;
+                // Log first few failures for debugging
+                if total_count - success_count <= 20 {
+                    eprintln!("FAIL [{}]: {:?}", name, e);
+                }
+            }
+        }
+    }
+
+    eprintln!("=== Full Init Missing Builtin Trace ===");
+    eprintln!(
+        "Evaluated {}/{} definitions successfully ({:.1}%)",
+        success_count,
+        total_count,
+        100.0 * success_count as f64 / total_count as f64
+    );
+    eprintln!("{} unique missing builtins:", missing.len());
+    for name in &missing {
+        eprintln!("  - {}", name);
+    }
+    eprintln!("\nError breakdown:");
+    for (kind, count) in &error_counts {
+        eprintln!("  {}: {}", kind, count);
+    }
+    eprintln!("=== End trace ===");
+}
+
+#[test]
+#[ignore = "Heavy test: loads Lean.Elab.Frontend. Run with: cargo test -p rslean-interp -- --ignored test_trace_missing_builtins_elab_frontend"]
+fn test_trace_missing_builtins_elab_frontend() {
+    let start = std::time::Instant::now();
+    let env = match loader::load_module_env("Lean.Elab.Frontend") {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    eprintln!(
+        "Loaded Lean.Elab.Frontend in {:.1}s",
+        start.elapsed().as_secs_f64()
+    );
+
+    let mut total_constants = 0u64;
+    env.for_each_constant(|_| total_constants += 1);
+    eprintln!("Total constants in environment: {}", total_constants);
+
+    let mut interp = Interpreter::new(env.clone());
+    let mut missing: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut error_counts: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    let mut success_count = 0u64;
+    let mut total_count = 0u64;
+    let mut elab_failures: Vec<(String, String)> = Vec::new();
+
+    // Only evaluate Lean.Elab.* and Lean.Parser.* definitions (the elaborator path).
+    // Evaluating ALL 100K+ definitions would take too long.
+    let mut defs: Vec<(String, rslean_expr::Expr)> = Vec::new();
+    env.for_each_constant(|ci| {
+        if let rslean_expr::ConstantInfo::Definition { name, value, .. } = ci {
+            let n = name.to_string();
+            if n.starts_with("Lean.Elab.") || n.starts_with("Lean.Parser.") {
+                defs.push((n, value.clone()));
+            }
+        }
+    });
+
+    eprintln!("Evaluating {} Lean.Elab/Parser definitions...", defs.len());
+
+    for (name, expr) in &defs {
+        total_count += 1;
+        match interp.eval(expr, &crate::env::LocalEnv::new()) {
+            Ok(_) => {
+                success_count += 1;
+            }
+            Err(InterpError::UnknownConstant(n)) => {
+                missing.insert(n.to_string());
+                if elab_failures.len() < 100 {
+                    elab_failures.push((name.clone(), format!("UnknownConstant({})", n)));
+                }
+            }
+            Err(e) => {
+                let err_kind = match &e {
+                    InterpError::StackOverflow(_) => "StackOverflow".to_string(),
+                    InterpError::TypeError(msg) => {
+                        let short_msg = if msg.len() > 80 { &msg[..80] } else { msg };
+                        format!("TypeError: {}", short_msg)
+                    }
+                    InterpError::ArityMismatch { .. } => "ArityMismatch".to_string(),
+                    InterpError::UnboundVar(_) => "UnboundVar".to_string(),
+                    InterpError::ProjOutOfRange { .. } => "ProjOutOfRange".to_string(),
+                    InterpError::RecursorError(_) => "RecursorError".to_string(),
+                    InterpError::BuiltinError(msg) => {
+                        let short_msg = if msg.len() > 80 { &msg[..80] } else { msg };
+                        format!("BuiltinError({})", short_msg)
+                    }
+                    _ => format!("{:?}", e),
+                };
+                *error_counts.entry(err_kind.clone()).or_insert(0) += 1;
+                if elab_failures.len() < 100 {
+                    elab_failures.push((name.clone(), err_kind));
+                }
+            }
+        }
+    }
+
+    eprintln!("\n=== Lean.Elab.Frontend Missing Builtin Trace ===");
+    eprintln!(
+        "Elab/Parser: {}/{} definitions OK ({:.1}%)",
+        success_count,
+        total_count,
+        100.0 * success_count as f64 / total_count.max(1) as f64
+    );
+    eprintln!("\n{} unique missing builtins:", missing.len());
+    for name in &missing {
+        eprintln!("  - {}", name);
+    }
+    eprintln!("\nError breakdown:");
+    for (kind, count) in &error_counts {
+        eprintln!("  {}: {}", kind, count);
+    }
+    if !elab_failures.is_empty() {
+        eprintln!("\nFirst {} Lean.Elab/Parser failures:", elab_failures.len());
+        for (def_name, err) in &elab_failures {
+            eprintln!("  {} => {}", def_name, err);
+        }
+    }
+    eprintln!("=== End Elab trace ===");
+}
+
+#[test]
+#[ignore = "Heavy test: loads Lean library modules. Run with: cargo test -p rslean-interp -- --ignored test_load_lean_library"]
+fn test_load_lean_library() {
+    // Load Lean.Data (smaller module tree) to test loading beyond Init.
+    let start = std::time::Instant::now();
+    let env = match loader::load_module_env("Lean.Data") {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    eprintln!("Loaded Lean.Data in {:.1}s", start.elapsed().as_secs_f64());
+
+    let mut def_count = 0u64;
+    let mut thm_count = 0u64;
+    let mut ind_count = 0u64;
+    let mut ctor_count = 0u64;
+    let mut rec_count = 0u64;
+    let mut ax_count = 0u64;
+    let mut opaque_count = 0u64;
+    let mut quot_count = 0u64;
+
+    env.for_each_constant(|ci| match ci {
+        rslean_expr::ConstantInfo::Definition { .. } => def_count += 1,
+        rslean_expr::ConstantInfo::Theorem { .. } => thm_count += 1,
+        rslean_expr::ConstantInfo::Inductive { .. } => ind_count += 1,
+        rslean_expr::ConstantInfo::Constructor { .. } => ctor_count += 1,
+        rslean_expr::ConstantInfo::Recursor { .. } => rec_count += 1,
+        rslean_expr::ConstantInfo::Axiom { .. } => ax_count += 1,
+        rslean_expr::ConstantInfo::Opaque { .. } => opaque_count += 1,
+        rslean_expr::ConstantInfo::Quot { .. } => quot_count += 1,
+    });
+
+    let total = def_count
+        + thm_count
+        + ind_count
+        + ctor_count
+        + rec_count
+        + ax_count
+        + opaque_count
+        + quot_count;
+    eprintln!("=== Lean Library Stats ===");
+    eprintln!("Total constants: {}", total);
+    eprintln!("  Definitions: {}", def_count);
+    eprintln!("  Theorems:    {}", thm_count);
+    eprintln!("  Inductives:  {}", ind_count);
+    eprintln!("  Constructors:{}", ctor_count);
+    eprintln!("  Recursors:   {}", rec_count);
+    eprintln!("  Axioms:      {}", ax_count);
+    eprintln!("  Opaques:     {}", opaque_count);
+    eprintln!("  Quotients:   {}", quot_count);
+    eprintln!("=========================");
+
+    // Basic sanity: should have at least as many as Init alone
+    assert!(
+        total > 40000,
+        "Expected >40K constants for full Lean library, got {}",
+        total
+    );
+
+    // Try creating an interpreter and evaluating a simple expression
+    let mut interp = Interpreter::new(env.clone());
+
+    // Evaluate Nat.add 2 3 = 5
+    let add = Expr::const_(Name::from_str_parts("Nat.add"), vec![]);
+    let add_expr = Expr::app(
+        Expr::app(add, Expr::lit(Literal::nat_small(2))),
+        Expr::lit(Literal::nat_small(3)),
+    );
+    let result = interp.eval(&add_expr, &crate::env::LocalEnv::new());
+    assert!(
+        result.is_ok(),
+        "Nat.add 2 3 failed with full Lean env: {:?}",
+        result.err()
+    );
+    assert_eq!(result.unwrap().as_nat().unwrap(), &BigUint::from(5u32));
+
+    eprintln!("Basic evaluation works with full Lean library!");
+}
+
+#[test]
+#[ignore = "Heavy test: loads Lean.Elab.Frontend (~10min). Run with: cargo test -p rslean-interp -- --ignored test_process_lean_input"]
+fn test_process_lean_input() {
+    let start = std::time::Instant::now();
+    let env = match loader::load_module_env("Lean.Elab.Frontend") {
+        Some(e) => e,
+        None => {
+            eprintln!("Skipping test: no Lean toolchain found");
+            return;
+        }
+    };
+    eprintln!(
+        "Loaded Lean.Elab.Frontend in {:.1}s",
+        start.elapsed().as_secs_f64()
+    );
+
+    let mut total_constants = 0u64;
+    env.for_each_constant(|_| total_constants += 1);
+    eprintln!("Total constants in environment: {}", total_constants);
+
+    let mut interp = Interpreter::new(env);
+
+    let input = "#check Nat";
+    let file_name = "<test>";
+    eprintln!("Calling Lean.Elab.process with input: {:?}", input);
+
+    let call_start = std::time::Instant::now();
+    match interp.process_lean_input(input, file_name) {
+        Ok((env_val, msg_val)) => {
+            eprintln!("SUCCESS in {:.1}s", call_start.elapsed().as_secs_f64());
+            eprintln!(
+                "  Environment result: {:?}",
+                std::mem::discriminant(&env_val)
+            );
+            eprintln!(
+                "  MessageLog result:  {:?}",
+                std::mem::discriminant(&msg_val)
+            );
+            match &env_val {
+                Value::Environment(_) => eprintln!("  -> Got Value::Environment (ideal)"),
+                Value::Ctor {
+                    name, tag, fields, ..
+                } => {
+                    eprintln!(
+                        "  -> Got Ctor({}, tag={}, {} fields)",
+                        name,
+                        tag,
+                        fields.len()
+                    );
+                }
+                _ => eprintln!("  -> Got {:?}", env_val),
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "FAILED in {:.1}s: {}",
+                call_start.elapsed().as_secs_f64(),
+                e
+            );
+            match &e {
+                InterpError::UnknownConstant(name) => {
+                    eprintln!("  Missing constant: {}", name);
+                    eprintln!("  This indicates a missing builtin or unloaded module.");
+                }
+                InterpError::StackOverflow(depth) => {
+                    eprintln!("  Stack overflow at depth {}", depth);
+                }
+                InterpError::TypeError(msg) => {
+                    eprintln!("  Type error: {}", msg);
+                }
+                _ => {
+                    eprintln!("  Error details: {:?}", e);
+                }
+            }
+        }
+    }
+
+    eprintln!("Total test time: {:.1}s", start.elapsed().as_secs_f64());
 }
