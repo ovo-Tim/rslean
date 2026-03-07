@@ -3065,7 +3065,6 @@ fn test_load_lean_library() {
 }
 
 #[test]
-#[ignore = "Heavy test: loads Lean.Elab.Frontend (~10min). Run with: cargo test -p rslean-interp -- --ignored test_process_lean_input"]
 fn test_process_lean_input() {
     let builder = std::thread::Builder::new().stack_size(256 * 1024 * 1024);
     let handler = builder
@@ -3180,7 +3179,6 @@ fn test_process_lean_input() {
 }
 
 #[test]
-#[ignore]
 fn test_debug_cases_on() {
     use rslean_name::Name;
 
@@ -3285,9 +3283,14 @@ fn test_debug_cases_on() {
 }
 
 #[test]
-#[ignore]
 fn test_env_search() {
-    let env = loader::load_module_env("Lean.Elab.Frontend").expect("load env");
+    let env = match loader::load_module_env("Lean.Elab.Frontend") {
+        Some(env) => env,
+        None => {
+            eprintln!("SKIP: could not load Lean.Elab.Frontend");
+            return;
+        }
+    };
 
     let patterns = vec![
         "processCommands",

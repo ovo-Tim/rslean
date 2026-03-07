@@ -1,11 +1,11 @@
 use crate::Literal;
 use rslean_level::Level;
 use rslean_name::Name;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::sync::Arc;
 
-/// Binder annotation info.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BinderInfo {
     Default,
     Implicit,
@@ -16,7 +16,7 @@ pub enum BinderInfo {
 /// Metadata key-value map (simplified — we use a list of (Name, value) pairs).
 pub type MData = Vec<(Name, MDataValue)>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MDataValue {
     Bool(bool),
     Name(Name),
@@ -98,7 +98,12 @@ impl Expr {
             has_univ_param: false,
             loose_bvar_range: (idx as u32).saturating_add(1),
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::BVar(idx), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::BVar(idx),
+                data,
+            }),
+        }
     }
 
     pub fn fvar(id: Name) -> Self {
@@ -111,7 +116,12 @@ impl Expr {
             has_univ_param: false,
             loose_bvar_range: 0,
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::FVar(id), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::FVar(id),
+                data,
+            }),
+        }
     }
 
     pub fn mvar(id: Name) -> Self {
@@ -124,7 +134,12 @@ impl Expr {
             has_univ_param: false,
             loose_bvar_range: 0,
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::MVar(id), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::MVar(id),
+                data,
+            }),
+        }
     }
 
     pub fn sort(level: Level) -> Self {
@@ -137,7 +152,12 @@ impl Expr {
             has_univ_param: level.has_param(),
             loose_bvar_range: 0,
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::Sort(level), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::Sort(level),
+                data,
+            }),
+        }
     }
 
     pub fn prop() -> Self {
@@ -160,7 +180,12 @@ impl Expr {
             has_univ_param,
             loose_bvar_range: 0,
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::Const(name, levels), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::Const(name, levels),
+                data,
+            }),
+        }
     }
 
     pub fn app(f: Expr, a: Expr) -> Self {
@@ -173,7 +198,12 @@ impl Expr {
             has_univ_param: f.has_univ_param() || a.has_univ_param(),
             loose_bvar_range: std::cmp::max(f.loose_bvar_range(), a.loose_bvar_range()),
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::App(f, a), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::App(f, a),
+                data,
+            }),
+        }
     }
 
     /// Build nested applications: `mk_app(f, [a1, a2, a3])` → `App(App(App(f, a1), a2), a3)`
@@ -200,7 +230,12 @@ impl Expr {
             has_univ_param: ty.has_univ_param() || body.has_univ_param(),
             loose_bvar_range: std::cmp::max(ty.loose_bvar_range(), body_range),
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::Lam(name, ty, body, bi), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::Lam(name, ty, body, bi),
+                data,
+            }),
+        }
     }
 
     pub fn forall_e(name: Name, ty: Expr, body: Expr, bi: BinderInfo) -> Self {
@@ -218,7 +253,12 @@ impl Expr {
             has_univ_param: ty.has_univ_param() || body.has_univ_param(),
             loose_bvar_range: std::cmp::max(ty.loose_bvar_range(), body_range),
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::ForallE(name, ty, body, bi), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::ForallE(name, ty, body, bi),
+                data,
+            }),
+        }
     }
 
     /// Non-dependent arrow: `A → B` = `ForallE("_", A, B, Default)` where B has no loose bvar 0.
@@ -238,11 +278,15 @@ impl Expr {
             0
         };
         let data = ExprData {
-            hash: mix(mix(mix(mix(37, name.hash() as u32), ty.hash()), val.hash()), body.hash()),
+            hash: mix(
+                mix(mix(mix(37, name.hash() as u32), ty.hash()), val.hash()),
+                body.hash(),
+            ),
             approx_depth: std::cmp::max(
                 std::cmp::max(ty.approx_depth(), val.approx_depth()),
                 body.approx_depth(),
-            ).saturating_add(1),
+            )
+            .saturating_add(1),
             has_fvar: ty.has_fvar() || val.has_fvar() || body.has_fvar(),
             has_expr_mvar: ty.has_expr_mvar() || val.has_expr_mvar() || body.has_expr_mvar(),
             has_univ_mvar: ty.has_univ_mvar() || val.has_univ_mvar() || body.has_univ_mvar(),
@@ -252,7 +296,12 @@ impl Expr {
                 body_range,
             ),
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::LetE(name, ty, val, body, non_dep), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::LetE(name, ty, val, body, non_dep),
+                data,
+            }),
+        }
     }
 
     pub fn lit(l: Literal) -> Self {
@@ -282,7 +331,12 @@ impl Expr {
             has_univ_param: false,
             loose_bvar_range: 0,
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::Lit(l), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::Lit(l),
+                data,
+            }),
+        }
     }
 
     pub fn mdata(md: MData, e: Expr) -> Self {
@@ -291,7 +345,12 @@ impl Expr {
             hash: mix(47, data.hash),
             ..data
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::MData(md, e), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::MData(md, e),
+                data,
+            }),
+        }
     }
 
     pub fn proj(sname: Name, idx: u64, e: Expr) -> Self {
@@ -304,7 +363,12 @@ impl Expr {
             has_univ_param: e.has_univ_param(),
             loose_bvar_range: e.loose_bvar_range(),
         };
-        Expr { inner: Arc::new(ExprInner { kind: ExprKind::Proj(sname, idx, e), data }) }
+        Expr {
+            inner: Arc::new(ExprInner {
+                kind: ExprKind::Proj(sname, idx, e),
+                data,
+            }),
+        }
     }
 
     // --- Accessors ---
@@ -364,19 +428,45 @@ impl Expr {
 
     // --- Kind tests ---
 
-    pub fn is_bvar(&self) -> bool { matches!(self.inner.kind, ExprKind::BVar(_)) }
-    pub fn is_fvar(&self) -> bool { matches!(self.inner.kind, ExprKind::FVar(_)) }
-    pub fn is_mvar(&self) -> bool { matches!(self.inner.kind, ExprKind::MVar(_)) }
-    pub fn is_sort(&self) -> bool { matches!(self.inner.kind, ExprKind::Sort(_)) }
-    pub fn is_const(&self) -> bool { matches!(self.inner.kind, ExprKind::Const(_, _)) }
-    pub fn is_app(&self) -> bool { matches!(self.inner.kind, ExprKind::App(_, _)) }
-    pub fn is_lam(&self) -> bool { matches!(self.inner.kind, ExprKind::Lam(..)) }
-    pub fn is_forall(&self) -> bool { matches!(self.inner.kind, ExprKind::ForallE(..)) }
-    pub fn is_let(&self) -> bool { matches!(self.inner.kind, ExprKind::LetE(..)) }
-    pub fn is_lit(&self) -> bool { matches!(self.inner.kind, ExprKind::Lit(_)) }
-    pub fn is_mdata(&self) -> bool { matches!(self.inner.kind, ExprKind::MData(..)) }
-    pub fn is_proj(&self) -> bool { matches!(self.inner.kind, ExprKind::Proj(..)) }
-    pub fn is_binding(&self) -> bool { self.is_lam() || self.is_forall() }
+    pub fn is_bvar(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::BVar(_))
+    }
+    pub fn is_fvar(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::FVar(_))
+    }
+    pub fn is_mvar(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::MVar(_))
+    }
+    pub fn is_sort(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::Sort(_))
+    }
+    pub fn is_const(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::Const(_, _))
+    }
+    pub fn is_app(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::App(_, _))
+    }
+    pub fn is_lam(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::Lam(..))
+    }
+    pub fn is_forall(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::ForallE(..))
+    }
+    pub fn is_let(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::LetE(..))
+    }
+    pub fn is_lit(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::Lit(_))
+    }
+    pub fn is_mdata(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::MData(..))
+    }
+    pub fn is_proj(&self) -> bool {
+        matches!(self.inner.kind, ExprKind::Proj(..))
+    }
+    pub fn is_binding(&self) -> bool {
+        self.is_lam() || self.is_forall()
+    }
     pub fn is_prop(&self) -> bool {
         matches!(&self.inner.kind, ExprKind::Sort(l) if l.is_zero())
     }
@@ -384,28 +474,52 @@ impl Expr {
     // --- Destructors ---
 
     pub fn bvar_idx(&self) -> u64 {
-        match &self.inner.kind { ExprKind::BVar(i) => *i, _ => panic!("not bvar") }
+        match &self.inner.kind {
+            ExprKind::BVar(i) => *i,
+            _ => panic!("not bvar"),
+        }
     }
     pub fn fvar_name(&self) -> &Name {
-        match &self.inner.kind { ExprKind::FVar(n) => n, _ => panic!("not fvar") }
+        match &self.inner.kind {
+            ExprKind::FVar(n) => n,
+            _ => panic!("not fvar"),
+        }
     }
     pub fn mvar_name(&self) -> &Name {
-        match &self.inner.kind { ExprKind::MVar(n) => n, _ => panic!("not mvar") }
+        match &self.inner.kind {
+            ExprKind::MVar(n) => n,
+            _ => panic!("not mvar"),
+        }
     }
     pub fn sort_level(&self) -> &Level {
-        match &self.inner.kind { ExprKind::Sort(l) => l, _ => panic!("not sort") }
+        match &self.inner.kind {
+            ExprKind::Sort(l) => l,
+            _ => panic!("not sort"),
+        }
     }
     pub fn const_name(&self) -> &Name {
-        match &self.inner.kind { ExprKind::Const(n, _) => n, _ => panic!("not const") }
+        match &self.inner.kind {
+            ExprKind::Const(n, _) => n,
+            _ => panic!("not const"),
+        }
     }
     pub fn const_levels(&self) -> &[Level] {
-        match &self.inner.kind { ExprKind::Const(_, ls) => ls, _ => panic!("not const") }
+        match &self.inner.kind {
+            ExprKind::Const(_, ls) => ls,
+            _ => panic!("not const"),
+        }
     }
     pub fn app_fn(&self) -> &Expr {
-        match &self.inner.kind { ExprKind::App(f, _) => f, _ => panic!("not app") }
+        match &self.inner.kind {
+            ExprKind::App(f, _) => f,
+            _ => panic!("not app"),
+        }
     }
     pub fn app_arg(&self) -> &Expr {
-        match &self.inner.kind { ExprKind::App(_, a) => a, _ => panic!("not app") }
+        match &self.inner.kind {
+            ExprKind::App(_, a) => a,
+            _ => panic!("not app"),
+        }
     }
     pub fn binding_name(&self) -> &Name {
         match &self.inner.kind {
@@ -432,37 +546,70 @@ impl Expr {
         }
     }
     pub fn let_name(&self) -> &Name {
-        match &self.inner.kind { ExprKind::LetE(n, ..) => n, _ => panic!("not let") }
+        match &self.inner.kind {
+            ExprKind::LetE(n, ..) => n,
+            _ => panic!("not let"),
+        }
     }
     pub fn let_type(&self) -> &Expr {
-        match &self.inner.kind { ExprKind::LetE(_, t, ..) => t, _ => panic!("not let") }
+        match &self.inner.kind {
+            ExprKind::LetE(_, t, ..) => t,
+            _ => panic!("not let"),
+        }
     }
     pub fn let_value(&self) -> &Expr {
-        match &self.inner.kind { ExprKind::LetE(_, _, v, ..) => v, _ => panic!("not let") }
+        match &self.inner.kind {
+            ExprKind::LetE(_, _, v, ..) => v,
+            _ => panic!("not let"),
+        }
     }
     pub fn let_body(&self) -> &Expr {
-        match &self.inner.kind { ExprKind::LetE(_, _, _, b, _) => b, _ => panic!("not let") }
+        match &self.inner.kind {
+            ExprKind::LetE(_, _, _, b, _) => b,
+            _ => panic!("not let"),
+        }
     }
     pub fn let_nondep(&self) -> bool {
-        match &self.inner.kind { ExprKind::LetE(_, _, _, _, nd) => *nd, _ => panic!("not let") }
+        match &self.inner.kind {
+            ExprKind::LetE(_, _, _, _, nd) => *nd,
+            _ => panic!("not let"),
+        }
     }
     pub fn lit_value(&self) -> &Literal {
-        match &self.inner.kind { ExprKind::Lit(l) => l, _ => panic!("not lit") }
+        match &self.inner.kind {
+            ExprKind::Lit(l) => l,
+            _ => panic!("not lit"),
+        }
     }
     pub fn mdata_data(&self) -> &MData {
-        match &self.inner.kind { ExprKind::MData(d, _) => d, _ => panic!("not mdata") }
+        match &self.inner.kind {
+            ExprKind::MData(d, _) => d,
+            _ => panic!("not mdata"),
+        }
     }
     pub fn mdata_expr(&self) -> &Expr {
-        match &self.inner.kind { ExprKind::MData(_, e) => e, _ => panic!("not mdata") }
+        match &self.inner.kind {
+            ExprKind::MData(_, e) => e,
+            _ => panic!("not mdata"),
+        }
     }
     pub fn proj_sname(&self) -> &Name {
-        match &self.inner.kind { ExprKind::Proj(s, ..) => s, _ => panic!("not proj") }
+        match &self.inner.kind {
+            ExprKind::Proj(s, ..) => s,
+            _ => panic!("not proj"),
+        }
     }
     pub fn proj_idx(&self) -> u64 {
-        match &self.inner.kind { ExprKind::Proj(_, i, _) => *i, _ => panic!("not proj") }
+        match &self.inner.kind {
+            ExprKind::Proj(_, i, _) => *i,
+            _ => panic!("not proj"),
+        }
     }
     pub fn proj_expr(&self) -> &Expr {
-        match &self.inner.kind { ExprKind::Proj(_, _, e) => e, _ => panic!("not proj") }
+        match &self.inner.kind {
+            ExprKind::Proj(_, _, e) => e,
+            _ => panic!("not proj"),
+        }
     }
 
     // --- App utilities ---
@@ -516,7 +663,11 @@ impl Expr {
             ExprKind::BVar(idx) => {
                 if *idx >= offset && (*idx - offset) < subst.len() as u64 {
                     let s = &subst[(*idx - offset) as usize];
-                    if offset > 0 { s.lift_loose_bvars(0, offset as u32) } else { s.clone() }
+                    if offset > 0 {
+                        s.lift_loose_bvars(0, offset as u32)
+                    } else {
+                        s.clone()
+                    }
                 } else {
                     self.clone()
                 }
@@ -590,24 +741,26 @@ impl Expr {
                     self.clone()
                 }
             }
-            ExprKind::App(f, a) => {
-                Expr::app(f.lift_core(s, d, offset), a.lift_core(s, d, offset))
-            }
-            ExprKind::Lam(n, dom, body, bi) => {
-                Expr::lam(n.clone(), dom.lift_core(s, d, offset), body.lift_core(s, d, offset + 1), *bi)
-            }
-            ExprKind::ForallE(n, dom, body, bi) => {
-                Expr::forall_e(n.clone(), dom.lift_core(s, d, offset), body.lift_core(s, d, offset + 1), *bi)
-            }
-            ExprKind::LetE(n, t, v, b, nd) => {
-                Expr::let_e(
-                    n.clone(),
-                    t.lift_core(s, d, offset),
-                    v.lift_core(s, d, offset),
-                    b.lift_core(s, d, offset + 1),
-                    *nd,
-                )
-            }
+            ExprKind::App(f, a) => Expr::app(f.lift_core(s, d, offset), a.lift_core(s, d, offset)),
+            ExprKind::Lam(n, dom, body, bi) => Expr::lam(
+                n.clone(),
+                dom.lift_core(s, d, offset),
+                body.lift_core(s, d, offset + 1),
+                *bi,
+            ),
+            ExprKind::ForallE(n, dom, body, bi) => Expr::forall_e(
+                n.clone(),
+                dom.lift_core(s, d, offset),
+                body.lift_core(s, d, offset + 1),
+                *bi,
+            ),
+            ExprKind::LetE(n, t, v, b, nd) => Expr::let_e(
+                n.clone(),
+                t.lift_core(s, d, offset),
+                v.lift_core(s, d, offset),
+                b.lift_core(s, d, offset + 1),
+                *nd,
+            ),
             ExprKind::MData(md, e) => Expr::mdata(md.clone(), e.lift_core(s, d, offset)),
             ExprKind::Proj(sn, i, e) => Expr::proj(sn.clone(), *i, e.lift_core(s, d, offset)),
             _ => self.clone(),
@@ -637,21 +790,25 @@ impl Expr {
             ExprKind::App(f, a) => {
                 Expr::app(f.lower_core(s, d, offset), a.lower_core(s, d, offset))
             }
-            ExprKind::Lam(n, dom, body, bi) => {
-                Expr::lam(n.clone(), dom.lower_core(s, d, offset), body.lower_core(s, d, offset + 1), *bi)
-            }
-            ExprKind::ForallE(n, dom, body, bi) => {
-                Expr::forall_e(n.clone(), dom.lower_core(s, d, offset), body.lower_core(s, d, offset + 1), *bi)
-            }
-            ExprKind::LetE(n, t, v, b, nd) => {
-                Expr::let_e(
-                    n.clone(),
-                    t.lower_core(s, d, offset),
-                    v.lower_core(s, d, offset),
-                    b.lower_core(s, d, offset + 1),
-                    *nd,
-                )
-            }
+            ExprKind::Lam(n, dom, body, bi) => Expr::lam(
+                n.clone(),
+                dom.lower_core(s, d, offset),
+                body.lower_core(s, d, offset + 1),
+                *bi,
+            ),
+            ExprKind::ForallE(n, dom, body, bi) => Expr::forall_e(
+                n.clone(),
+                dom.lower_core(s, d, offset),
+                body.lower_core(s, d, offset + 1),
+                *bi,
+            ),
+            ExprKind::LetE(n, t, v, b, nd) => Expr::let_e(
+                n.clone(),
+                t.lower_core(s, d, offset),
+                v.lower_core(s, d, offset),
+                b.lower_core(s, d, offset + 1),
+                *nd,
+            ),
             ExprKind::MData(md, e) => Expr::mdata(md.clone(), e.lower_core(s, d, offset)),
             ExprKind::Proj(sn, i, e) => Expr::proj(sn.clone(), *i, e.lower_core(s, d, offset)),
             _ => self.clone(),
@@ -676,21 +833,25 @@ impl Expr {
             ExprKind::App(f, a) => {
                 Expr::app(f.abstract_core(s, offset), a.abstract_core(s, offset))
             }
-            ExprKind::Lam(n, d, b, bi) => {
-                Expr::lam(n.clone(), d.abstract_core(s, offset), b.abstract_core(s, offset + 1), *bi)
-            }
-            ExprKind::ForallE(n, d, b, bi) => {
-                Expr::forall_e(n.clone(), d.abstract_core(s, offset), b.abstract_core(s, offset + 1), *bi)
-            }
-            ExprKind::LetE(n, t, v, b, nd) => {
-                Expr::let_e(
-                    n.clone(),
-                    t.abstract_core(s, offset),
-                    v.abstract_core(s, offset),
-                    b.abstract_core(s, offset + 1),
-                    *nd,
-                )
-            }
+            ExprKind::Lam(n, d, b, bi) => Expr::lam(
+                n.clone(),
+                d.abstract_core(s, offset),
+                b.abstract_core(s, offset + 1),
+                *bi,
+            ),
+            ExprKind::ForallE(n, d, b, bi) => Expr::forall_e(
+                n.clone(),
+                d.abstract_core(s, offset),
+                b.abstract_core(s, offset + 1),
+                *bi,
+            ),
+            ExprKind::LetE(n, t, v, b, nd) => Expr::let_e(
+                n.clone(),
+                t.abstract_core(s, offset),
+                v.abstract_core(s, offset),
+                b.abstract_core(s, offset + 1),
+                *nd,
+            ),
             ExprKind::MData(md, e) => Expr::mdata(md.clone(), e.abstract_core(s, offset)),
             ExprKind::Proj(sn, i, e) => Expr::proj(sn.clone(), *i, e.abstract_core(s, offset)),
             _ => self.clone(),
@@ -712,8 +873,7 @@ impl Expr {
                     Some(Expr::sort(nl))
                 }
                 ExprKind::Const(n, lvls) => {
-                    let new_lvls: Vec<Level> =
-                        lvls.iter().map(|l| l.instantiate(ps, ls)).collect();
+                    let new_lvls: Vec<Level> = lvls.iter().map(|l| l.instantiate(ps, ls)).collect();
                     Some(Expr::const_(n.clone(), new_lvls))
                 }
                 _ => None,
@@ -727,16 +887,18 @@ impl Expr {
             return r;
         }
         match &self.inner.kind {
-            ExprKind::BVar(_) | ExprKind::FVar(_) | ExprKind::MVar(_)
-            | ExprKind::Sort(_) | ExprKind::Const(_, _) | ExprKind::Lit(_) => self.clone(),
+            ExprKind::BVar(_)
+            | ExprKind::FVar(_)
+            | ExprKind::MVar(_)
+            | ExprKind::Sort(_)
+            | ExprKind::Const(_, _)
+            | ExprKind::Lit(_) => self.clone(),
             ExprKind::App(fn_, arg) => {
                 let nf = fn_.replace(f);
                 let na = arg.replace(f);
                 Expr::app(nf, na)
             }
-            ExprKind::Lam(n, d, b, bi) => {
-                Expr::lam(n.clone(), d.replace(f), b.replace(f), *bi)
-            }
+            ExprKind::Lam(n, d, b, bi) => Expr::lam(n.clone(), d.replace(f), b.replace(f), *bi),
             ExprKind::ForallE(n, d, b, bi) => {
                 Expr::forall_e(n.clone(), d.replace(f), b.replace(f), *bi)
             }
@@ -754,14 +916,24 @@ impl Expr {
             return;
         }
         match &self.inner.kind {
-            ExprKind::BVar(_) | ExprKind::FVar(_) | ExprKind::MVar(_)
-            | ExprKind::Sort(_) | ExprKind::Const(_, _) | ExprKind::Lit(_) => {}
-            ExprKind::App(fn_, arg) => { fn_.for_each(f); arg.for_each(f); }
+            ExprKind::BVar(_)
+            | ExprKind::FVar(_)
+            | ExprKind::MVar(_)
+            | ExprKind::Sort(_)
+            | ExprKind::Const(_, _)
+            | ExprKind::Lit(_) => {}
+            ExprKind::App(fn_, arg) => {
+                fn_.for_each(f);
+                arg.for_each(f);
+            }
             ExprKind::Lam(_, d, b, _) | ExprKind::ForallE(_, d, b, _) => {
-                d.for_each(f); b.for_each(f);
+                d.for_each(f);
+                b.for_each(f);
             }
             ExprKind::LetE(_, t, v, b, _) => {
-                t.for_each(f); v.for_each(f); b.for_each(f);
+                t.for_each(f);
+                v.for_each(f);
+                b.for_each(f);
             }
             ExprKind::MData(_, e) | ExprKind::Proj(_, _, e) => e.for_each(f),
         }
@@ -892,7 +1064,9 @@ impl fmt::Display for Expr {
                 } else {
                     write!(f, "{}.{{", n)?;
                     for (i, l) in ls.iter().enumerate() {
-                        if i > 0 { write!(f, ", ")?; }
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
                         write!(f, "{}", l)?;
                     }
                     write!(f, "}}")
@@ -918,6 +1092,93 @@ impl fmt::Display for Expr {
 impl fmt::Debug for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Expr({})", self)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+enum ExprRepr {
+    BVar(u64),
+    FVar(Name),
+    MVar(Name),
+    Sort(Level),
+    Const(Name, Vec<Level>),
+    App(Box<ExprRepr>, Box<ExprRepr>),
+    Lam(Name, Box<ExprRepr>, Box<ExprRepr>, BinderInfo),
+    ForallE(Name, Box<ExprRepr>, Box<ExprRepr>, BinderInfo),
+    LetE(Name, Box<ExprRepr>, Box<ExprRepr>, Box<ExprRepr>, bool),
+    Lit(Literal),
+    MData(MData, Box<ExprRepr>),
+    Proj(Name, u64, Box<ExprRepr>),
+}
+
+impl ExprRepr {
+    fn from_expr(e: &Expr) -> Self {
+        match &e.inner.kind {
+            ExprKind::BVar(i) => ExprRepr::BVar(*i),
+            ExprKind::FVar(n) => ExprRepr::FVar(n.clone()),
+            ExprKind::MVar(n) => ExprRepr::MVar(n.clone()),
+            ExprKind::Sort(l) => ExprRepr::Sort(l.clone()),
+            ExprKind::Const(n, ls) => ExprRepr::Const(n.clone(), ls.clone()),
+            ExprKind::App(f, a) => ExprRepr::App(
+                Box::new(ExprRepr::from_expr(f)),
+                Box::new(ExprRepr::from_expr(a)),
+            ),
+            ExprKind::Lam(n, d, b, bi) => ExprRepr::Lam(
+                n.clone(),
+                Box::new(ExprRepr::from_expr(d)),
+                Box::new(ExprRepr::from_expr(b)),
+                *bi,
+            ),
+            ExprKind::ForallE(n, d, b, bi) => ExprRepr::ForallE(
+                n.clone(),
+                Box::new(ExprRepr::from_expr(d)),
+                Box::new(ExprRepr::from_expr(b)),
+                *bi,
+            ),
+            ExprKind::LetE(n, t, v, b, nd) => ExprRepr::LetE(
+                n.clone(),
+                Box::new(ExprRepr::from_expr(t)),
+                Box::new(ExprRepr::from_expr(v)),
+                Box::new(ExprRepr::from_expr(b)),
+                *nd,
+            ),
+            ExprKind::Lit(l) => ExprRepr::Lit(l.clone()),
+            ExprKind::MData(md, e) => ExprRepr::MData(md.clone(), Box::new(ExprRepr::from_expr(e))),
+            ExprKind::Proj(sn, i, e) => {
+                ExprRepr::Proj(sn.clone(), *i, Box::new(ExprRepr::from_expr(e)))
+            }
+        }
+    }
+
+    fn to_expr(self) -> Expr {
+        match self {
+            ExprRepr::BVar(i) => Expr::bvar(i),
+            ExprRepr::FVar(n) => Expr::fvar(n),
+            ExprRepr::MVar(n) => Expr::mvar(n),
+            ExprRepr::Sort(l) => Expr::sort(l),
+            ExprRepr::Const(n, ls) => Expr::const_(n, ls),
+            ExprRepr::App(f, a) => Expr::app(f.to_expr(), a.to_expr()),
+            ExprRepr::Lam(n, d, b, bi) => Expr::lam(n, d.to_expr(), b.to_expr(), bi),
+            ExprRepr::ForallE(n, d, b, bi) => Expr::forall_e(n, d.to_expr(), b.to_expr(), bi),
+            ExprRepr::LetE(n, t, v, b, nd) => {
+                Expr::let_e(n, t.to_expr(), v.to_expr(), b.to_expr(), nd)
+            }
+            ExprRepr::Lit(l) => Expr::lit(l),
+            ExprRepr::MData(md, e) => Expr::mdata(md, e.to_expr()),
+            ExprRepr::Proj(sn, i, e) => Expr::proj(sn, i, e.to_expr()),
+        }
+    }
+}
+
+impl Serialize for Expr {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        ExprRepr::from_expr(self).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Expr {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ExprRepr::deserialize(deserializer).map(|r| r.to_expr())
     }
 }
 
@@ -1006,7 +1267,12 @@ mod tests {
     #[test]
     fn test_head_beta_reduce() {
         let body = Expr::bvar(0); // identity
-        let lam = Expr::lam(Name::mk_simple("x"), Expr::type_(), body, BinderInfo::Default);
+        let lam = Expr::lam(
+            Name::mk_simple("x"),
+            Expr::type_(),
+            body,
+            BinderInfo::Default,
+        );
         let c = Expr::const_(Name::mk_simple("c"), vec![]);
         let app = Expr::app(lam, c.clone());
         assert!(app.is_head_beta());

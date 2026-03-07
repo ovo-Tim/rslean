@@ -1,3 +1,4 @@
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::sync::Arc;
 
@@ -31,12 +32,24 @@ fn murmur_hash_64a(data: &[u8], seed: u64) -> u64 {
     // Process remaining bytes (fallthrough style)
     let tail = &data[chunks * 8..];
     let remaining = len & 7;
-    if remaining >= 7 { h ^= (tail[6] as u64) << 48; }
-    if remaining >= 6 { h ^= (tail[5] as u64) << 40; }
-    if remaining >= 5 { h ^= (tail[4] as u64) << 32; }
-    if remaining >= 4 { h ^= (tail[3] as u64) << 24; }
-    if remaining >= 3 { h ^= (tail[2] as u64) << 16; }
-    if remaining >= 2 { h ^= (tail[1] as u64) << 8; }
+    if remaining >= 7 {
+        h ^= (tail[6] as u64) << 48;
+    }
+    if remaining >= 6 {
+        h ^= (tail[5] as u64) << 40;
+    }
+    if remaining >= 5 {
+        h ^= (tail[4] as u64) << 32;
+    }
+    if remaining >= 4 {
+        h ^= (tail[3] as u64) << 24;
+    }
+    if remaining >= 3 {
+        h ^= (tail[2] as u64) << 16;
+    }
+    if remaining >= 2 {
+        h ^= (tail[1] as u64) << 8;
+    }
     if remaining >= 1 {
         h ^= tail[0] as u64;
         h = h.wrapping_mul(M);
@@ -358,6 +371,49 @@ enum NameLimb {
     Num(u64),
 }
 
+impl Serialize for Name {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_limbs().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Name {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let limbs = Vec::<NameLimb>::deserialize(deserializer)?;
+        let mut name = Name::anonymous();
+        for limb in limbs {
+            match limb {
+                NameLimb::Str(s) => name = Name::mk_str(name, s),
+                NameLimb::Num(n) => name = Name::mk_num(name, n),
+            }
+        }
+        Ok(name)
+    }
+}
+
+impl Serialize for NameLimb {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            NameLimb::Str(s) => serializer.serialize_newtype_variant("NameLimb", 0, "Str", s),
+            NameLimb::Num(n) => serializer.serialize_newtype_variant("NameLimb", 1, "Num", n),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for NameLimb {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        enum NameLimbHelper {
+            Str(String),
+            Num(u64),
+        }
+        match NameLimbHelper::deserialize(deserializer)? {
+            NameLimbHelper::Str(s) => Ok(NameLimb::Str(s)),
+            NameLimbHelper::Num(n) => Ok(NameLimb::Num(n)),
+        }
+    }
+}
+
 impl PartialEq for Name {
     fn eq(&self, other: &Self) -> bool {
         // Fast path: pointer equality
@@ -379,14 +435,12 @@ impl Name {
     fn structural_eq(&self, other: &Name) -> bool {
         match (&self.inner.kind, &other.inner.kind) {
             (NameKind::Anonymous, NameKind::Anonymous) => true,
-            (
-                NameKind::Str { prefix: p1, s: s1 },
-                NameKind::Str { prefix: p2, s: s2 },
-            ) => s1 == s2 && p1 == p2,
-            (
-                NameKind::Num { prefix: p1, n: n1 },
-                NameKind::Num { prefix: p2, n: n2 },
-            ) => n1 == n2 && p1 == p2,
+            (NameKind::Str { prefix: p1, s: s1 }, NameKind::Str { prefix: p2, s: s2 }) => {
+                s1 == s2 && p1 == p2
+            }
+            (NameKind::Num { prefix: p1, n: n1 }, NameKind::Num { prefix: p2, n: n2 }) => {
+                n1 == n2 && p1 == p2
+            }
             _ => false,
         }
     }

@@ -1,16 +1,15 @@
 use crate::Expr;
 use rslean_name::Name;
+use serde::{Deserialize, Serialize};
 
-/// Safety level of a definition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DefinitionSafety {
     Safe,
     Unsafe,
     Partial,
 }
 
-/// Reducibility hints for a definition.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReducibilityHints {
     Opaque,
     Abbreviation,
@@ -34,8 +33,7 @@ impl ReducibilityHints {
     }
 }
 
-/// Quotient type kinds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum QuotKind {
     Type,
     Mk,
@@ -43,16 +41,14 @@ pub enum QuotKind {
     Ind,
 }
 
-/// A recursor rule: maps a constructor to its reduction RHS.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecursorRule {
     pub ctor_name: Name,
     pub num_fields: u32,
     pub rhs: Expr,
 }
 
-/// All declaration variants in a Lean 4 environment.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ConstantInfo {
     Axiom {
         name: Name,
@@ -242,8 +238,7 @@ impl std::fmt::Display for ConstantInfo {
     }
 }
 
-/// A declaration to be added to the environment (before elaboration into ConstantInfo).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Declaration {
     Axiom {
         name: Name,
@@ -281,16 +276,14 @@ pub enum Declaration {
     },
 }
 
-/// One inductive type in a (mutual) inductive declaration.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InductiveType {
     pub name: Name,
     pub type_: Expr,
     pub ctors: Vec<ConstructorDecl>,
 }
 
-/// A constructor in an inductive type declaration.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConstructorDecl {
     pub name: Name,
     pub type_: Expr,

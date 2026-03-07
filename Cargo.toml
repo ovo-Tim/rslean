@@ -31,7 +31,7 @@ lasso = "0.7"
 rustc-hash = "2"
 
 # Arbitrary precision integers
-num-bigint = "0.4"
+num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = "0.2"
 num-integer = "0.1"
 
@@ -45,6 +45,10 @@ memmap2 = "0.9"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
 
 # Logging
 tracing = "0.1"

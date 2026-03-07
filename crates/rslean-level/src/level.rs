@@ -1,4 +1,5 @@
 use rslean_name::Name;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::sync::Arc;
 
@@ -106,15 +107,25 @@ impl Level {
         if l1.is_explicit() && l2.is_explicit() {
             return if l1.depth() >= l2.depth() { l1 } else { l2 };
         }
-        if l1 == l2 { return l1; }
-        if l1.is_zero() { return l2; }
-        if l2.is_zero() { return l1; }
+        if l1 == l2 {
+            return l1;
+        }
+        if l1.is_zero() {
+            return l2;
+        }
+        if l2.is_zero() {
+            return l1;
+        }
         // l2 == max(l1, _) or max(_, l1) => max(l1, l2) == l2
         if let LevelKind::Max(ref a, ref b) = l2.inner.kind {
-            if a == &l1 || b == &l1 { return l2; }
+            if a == &l1 || b == &l1 {
+                return l2;
+            }
         }
         if let LevelKind::Max(ref a, ref b) = l1.inner.kind {
-            if a == &l2 || b == &l2 { return l1; }
+            if a == &l2 || b == &l2 {
+                return l1;
+            }
         }
         let (base1, off1) = l1.to_offset();
         let (base2, off2) = l2.to_offset();
@@ -129,9 +140,15 @@ impl Level {
         if l2.is_not_zero() {
             return Level::max(l1, l2);
         }
-        if l2.is_zero() { return l2; } // imax u 0 = 0
-        if l1.is_zero() || l1.is_one() { return l2; } // imax 0 u = imax 1 u = u
-        if l1 == l2 { return l1; } // imax u u = u
+        if l2.is_zero() {
+            return l2;
+        } // imax u 0 = 0
+        if l1.is_zero() || l1.is_one() {
+            return l2;
+        } // imax 0 u = imax 1 u = u
+        if l1 == l2 {
+            return l1;
+        } // imax u u = u
         Level::imax_core(l1, l2)
     }
 
@@ -394,9 +411,7 @@ impl Level {
             LevelKind::Max(l1, l2) => {
                 let new_l1 = l1.replace(f);
                 let new_l2 = l2.replace(f);
-                if Arc::ptr_eq(&l1.inner, &new_l1.inner)
-                    && Arc::ptr_eq(&l2.inner, &new_l2.inner)
-                {
+                if Arc::ptr_eq(&l1.inner, &new_l1.inner) && Arc::ptr_eq(&l2.inner, &new_l2.inner) {
                     self.clone()
                 } else {
                     Level::max(new_l1, new_l2)
@@ -405,9 +420,7 @@ impl Level {
             LevelKind::IMax(l1, l2) => {
                 let new_l1 = l1.replace(f);
                 let new_l2 = l2.replace(f);
-                if Arc::ptr_eq(&l1.inner, &new_l1.inner)
-                    && Arc::ptr_eq(&l2.inner, &new_l2.inner)
-                {
+                if Arc::ptr_eq(&l1.inner, &new_l1.inner) && Arc::ptr_eq(&l2.inner, &new_l2.inner) {
                     self.clone()
                 } else {
                     Level::imax(new_l1, new_l2)
@@ -435,8 +448,13 @@ impl Level {
     pub fn occurs(&self, u: &Level) -> bool {
         let mut found = false;
         self.for_each(&mut |l| {
-            if found { return false; }
-            if l == u { found = true; return false; }
+            if found {
+                return false;
+            }
+            if l == u {
+                found = true;
+                return false;
+            }
             true
         });
         found
@@ -729,6 +747,58 @@ fn display_child(f: &mut fmt::Formatter<'_>, l: &Level) -> fmt::Result {
         write!(f, "(")?;
         display_level(f, l)?;
         write!(f, ")")
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+enum LevelRepr {
+    Zero,
+    Succ(Box<LevelRepr>),
+    Max(Box<LevelRepr>, Box<LevelRepr>),
+    IMax(Box<LevelRepr>, Box<LevelRepr>),
+    Param(Name),
+    MVar(Name),
+}
+
+impl LevelRepr {
+    fn from_level(l: &Level) -> Self {
+        match &l.inner.kind {
+            LevelKind::Zero => LevelRepr::Zero,
+            LevelKind::Succ(inner) => LevelRepr::Succ(Box::new(LevelRepr::from_level(inner))),
+            LevelKind::Max(a, b) => LevelRepr::Max(
+                Box::new(LevelRepr::from_level(a)),
+                Box::new(LevelRepr::from_level(b)),
+            ),
+            LevelKind::IMax(a, b) => LevelRepr::IMax(
+                Box::new(LevelRepr::from_level(a)),
+                Box::new(LevelRepr::from_level(b)),
+            ),
+            LevelKind::Param(n) => LevelRepr::Param(n.clone()),
+            LevelKind::MVar(n) => LevelRepr::MVar(n.clone()),
+        }
+    }
+
+    fn to_level(self) -> Level {
+        match self {
+            LevelRepr::Zero => Level::zero(),
+            LevelRepr::Succ(inner) => Level::succ(inner.to_level()),
+            LevelRepr::Max(a, b) => Level::max_core(a.to_level(), b.to_level()),
+            LevelRepr::IMax(a, b) => Level::imax_core(a.to_level(), b.to_level()),
+            LevelRepr::Param(n) => Level::param(n),
+            LevelRepr::MVar(n) => Level::mvar(n),
+        }
+    }
+}
+
+impl Serialize for Level {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        LevelRepr::from_level(self).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Level {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        LevelRepr::deserialize(deserializer).map(|r| r.to_level())
     }
 }
 

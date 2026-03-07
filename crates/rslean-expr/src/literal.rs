@@ -1,8 +1,8 @@
 use num_bigint::BigUint;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Lean 4 literal values.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Literal {
     Nat(BigUint),
     Str(String),

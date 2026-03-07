@@ -7,5 +7,6 @@ edition.workspace = true
 lasso = { workspace = true }
 rustc-hash = { workspace = true }
 num-bigint = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]

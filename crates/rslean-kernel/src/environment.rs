@@ -2,6 +2,7 @@ use crate::error::{KernelError, KernelResult};
 use rslean_expr::ConstantInfo;
 use rslean_name::Name;
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 
 /// The Lean 4 environment: an immutable map from names to constant declarations.
@@ -124,6 +125,39 @@ impl Default for Environment {
 impl std::fmt::Debug for Environment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Environment({} constants)", self.num_constants())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct EnvironmentData {
+    constants: Vec<ConstantInfo>,
+    quot_initialized: bool,
+}
+
+impl Serialize for Environment {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let data = EnvironmentData {
+            constants: self.inner.constants.values().cloned().collect(),
+            quot_initialized: self.inner.quot_initialized,
+        };
+        data.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Environment {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let data = EnvironmentData::deserialize(deserializer)?;
+        let mut constants = FxHashMap::default();
+        constants.reserve(data.constants.len());
+        for ci in data.constants {
+            constants.insert(ci.name().clone(), ci);
+        }
+        Ok(Environment {
+            inner: Arc::new(EnvironmentInner {
+                constants,
+                quot_initialized: data.quot_initialized,
+            }),
+        })
     }
 }
 
