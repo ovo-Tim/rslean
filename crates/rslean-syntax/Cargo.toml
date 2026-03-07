@@ -1,0 +1,10 @@
+[package]
+name = "rslean-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Syntax tree types for Lean 4 parser"
+
+[dependencies]
+rslean-name = { workspace = true }
+num-bigint = { workspace = true }

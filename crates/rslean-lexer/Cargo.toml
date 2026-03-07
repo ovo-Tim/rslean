@@ -1,0 +1,11 @@
+[package]
+name = "rslean-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lexer/tokenizer for Lean 4 source files"
+
+[dependencies]
+rslean-syntax = { workspace = true }
+rslean-name = { workspace = true }
+num-bigint = { workspace = true }

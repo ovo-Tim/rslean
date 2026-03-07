@@ -7,6 +7,9 @@ members = [
     "crates/rslean-olean",
     "crates/rslean-check",
     "crates/rslean-interp",
+    "crates/rslean-syntax",
+    "crates/rslean-lexer",
+    "crates/rslean-parser",
 ]
 resolver = "2"
 
@@ -23,6 +26,9 @@ rslean-expr = { path = "crates/rslean-expr" }
 rslean-kernel = { path = "crates/rslean-kernel" }
 rslean-olean = { path = "crates/rslean-olean" }
 rslean-interp = { path = "crates/rslean-interp" }
+rslean-syntax = { path = "crates/rslean-syntax" }
+rslean-lexer = { path = "crates/rslean-lexer" }
+rslean-parser = { path = "crates/rslean-parser" }
 
 # String interning
 lasso = "0.7"

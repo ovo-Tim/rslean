@@ -1,0 +1,12 @@
+[package]
+name = "rslean-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Parser for Lean 4 source files"
+
+[dependencies]
+rslean-syntax = { workspace = true }
+rslean-lexer = { workspace = true }
+rslean-name = { workspace = true }
+num-bigint = { workspace = true }

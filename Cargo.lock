@@ -333,6 +333,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rslean-lexer"
+version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "rslean-name",
+ "rslean-syntax",
+]
+
+[[package]]
 name = "rslean-name"
 version = "0.1.0"
 dependencies = [
@@ -356,6 +365,24 @@ dependencies = [
  "rustc-hash",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "rslean-parser"
+version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "rslean-lexer",
+ "rslean-name",
+ "rslean-syntax",
+]
+
+[[package]]
+name = "rslean-syntax"
+version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "rslean-name",
 ]
 
 [[package]]
