@@ -52,6 +52,9 @@ pub fn load_env_with_deps(root_path: &Path, search_paths: &[PathBuf]) -> Option<
 
     queue.push_back(root_path.to_path_buf());
 
+    let start = std::time::Instant::now();
+    let mut module_count = 0u32;
+
     while let Some(path) = queue.pop_front() {
         let path_key = path.to_string_lossy().to_string();
         if loaded.contains_key(&path_key) {
@@ -59,8 +62,18 @@ pub fn load_env_with_deps(root_path: &Path, search_paths: &[PathBuf]) -> Option<
         }
 
         let (_, data) = rslean_olean::load_module(&path).ok()?;
+        module_count += 1;
 
-        // Queue imports
+        if module_count % 50 == 0 {
+            eprintln!(
+                "[loader] {} modules loaded in {:.1}s (queue: {}, constants: {})",
+                module_count,
+                start.elapsed().as_secs_f64(),
+                queue.len(),
+                loaded.values().map(|v| v.len()).sum::<usize>()
+            );
+        }
+
         for imp in &data.imports {
             if let Some(imp_path) = resolve_module(&imp.module, search_paths) {
                 queue.push_back(imp_path);
@@ -71,15 +84,29 @@ pub fn load_env_with_deps(root_path: &Path, search_paths: &[PathBuf]) -> Option<
         order.push(path_key);
     }
 
-    // Build environment in load order
+    eprintln!(
+        "[loader] Loading complete: {} modules, {:.1}s",
+        module_count,
+        start.elapsed().as_secs_f64()
+    );
+
     let mut env = Environment::new();
+    let mut total_constants = 0usize;
     for key in &order {
         if let Some(constants) = loaded.get(key) {
             for ci in constants {
-                env = env.add_constant_unchecked(ci.clone());
+                env.add_constant_unchecked(ci.clone());
+                total_constants += 1;
             }
         }
     }
+
+    eprintln!(
+        "[loader] Environment built: {} constants, {:.1}s total",
+        total_constants,
+        start.elapsed().as_secs_f64()
+    );
+
     Some(env)
 }
 
@@ -91,7 +118,7 @@ pub fn load_prelude_env() -> Option<Environment> {
 
     let mut env = Environment::new();
     for ci in &module_data.constants {
-        env = env.add_constant_unchecked(ci.clone());
+        env.add_constant_unchecked(ci.clone());
     }
     Some(env)
 }
@@ -165,7 +192,7 @@ pub fn load_modules_env(module_names: &[&str]) -> Option<Environment> {
     for key in &order {
         if let Some(constants) = loaded.get(key) {
             for ci in constants {
-                env = env.add_constant_unchecked(ci.clone());
+                env.add_constant_unchecked(ci.clone());
             }
         }
     }

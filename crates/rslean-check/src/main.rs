@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use rslean_kernel::Environment;
 use rslean_name::Name;
@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Parser, Debug)]
-#[command(name = "rslean", about = "RSLean type checker — loads and checks .olean files")]
+#[command(
+    name = "rslean",
+    about = "RSLean type checker — loads and checks .olean files"
+)]
 struct Cli {
     /// Path to the .olean file(s) or Lean library root directory
     paths: Vec<PathBuf>,
@@ -90,8 +93,8 @@ fn load_all_modules(
             eprintln!("Loading: {}", path.display());
         }
 
-        let (header, data) = load_module(&path)
-            .with_context(|| format!("failed to load {}", path.display()))?;
+        let (header, data) =
+            load_module(&path).with_context(|| format!("failed to load {}", path.display()))?;
 
         // Determine module name from the path or const_names
         let module_name = path_to_name
@@ -113,7 +116,10 @@ fn load_all_modules(
             }
         }
 
-        loaded.insert(path_key.clone(), (module_name, LoadedModule { header, data }));
+        loaded.insert(
+            path_key.clone(),
+            (module_name, LoadedModule { header, data }),
+        );
         order.push(path_key);
     }
 
@@ -200,15 +206,15 @@ fn main() -> Result<()> {
 
     for (module_name, module) in &modules {
         if cli.verbose {
-            eprintln!("Checking module: {} ({} declarations)", module_name, module.data.constants.len());
+            eprintln!(
+                "Checking module: {} ({} declarations)",
+                module_name,
+                module.data.constants.len()
+            );
         }
         for ci in &module.data.constants {
-            match env.add_constant_unchecked(ci.clone()) {
-                env2 => {
-                    env = env2;
-                    checked += 1;
-                }
-            }
+            env.add_constant_unchecked(ci.clone());
+            checked += 1;
         }
     }
 
@@ -265,5 +271,8 @@ fn print_stats(modules: &[(Name, LoadedModule)]) {
     eprintln!("  Inductives:   {}", inductives);
     eprintln!("  Constructors: {}", ctors);
     eprintln!("  Recursors:    {}", recs);
-    eprintln!("  Total:        {}", axioms + defs + thms + opaques + quots + inductives + ctors + recs);
+    eprintln!(
+        "  Total:        {}",
+        axioms + defs + thms + opaques + quots + inductives + ctors + recs
+    );
 }

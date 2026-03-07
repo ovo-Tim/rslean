@@ -65,30 +65,22 @@ impl TypeChecker {
 
     fn infer_type_core(&mut self, e: &Expr) -> KernelResult<Expr> {
         match e.kind() {
-            ExprKind::BVar(_) => {
-                Err(KernelError::Panic("loose bound variable in infer_type".into()))
-            }
-            ExprKind::FVar(n) => {
-                self.local_ctx
-                    .get(n)
-                    .cloned()
-                    .ok_or_else(|| KernelError::Panic(format!("free variable '{}' not in local context", n)))
-            }
-            ExprKind::MVar(n) => {
-                Err(KernelError::Panic(format!("metavariable '{}' in infer_type", n)))
-            }
+            ExprKind::BVar(_) => Err(KernelError::Panic(
+                "loose bound variable in infer_type".into(),
+            )),
+            ExprKind::FVar(n) => self.local_ctx.get(n).cloned().ok_or_else(|| {
+                KernelError::Panic(format!("free variable '{}' not in local context", n))
+            }),
+            ExprKind::MVar(n) => Err(KernelError::Panic(format!(
+                "metavariable '{}' in infer_type",
+                n
+            ))),
             ExprKind::Sort(l) => Ok(Expr::sort(Level::succ(l.clone()))),
             ExprKind::Const(name, levels) => self.infer_constant(name, levels),
             ExprKind::App(f, a) => self.infer_app(f, a),
-            ExprKind::Lam(name, domain, body, bi) => {
-                self.infer_lambda(name, domain, body, *bi)
-            }
-            ExprKind::ForallE(name, domain, body, bi) => {
-                self.infer_pi(name, domain, body, *bi)
-            }
-            ExprKind::LetE(name, ty, val, body, _non_dep) => {
-                self.infer_let(name, ty, val, body)
-            }
+            ExprKind::Lam(name, domain, body, bi) => self.infer_lambda(name, domain, body, *bi),
+            ExprKind::ForallE(name, domain, body, bi) => self.infer_pi(name, domain, body, *bi),
+            ExprKind::LetE(name, ty, val, body, _non_dep) => self.infer_let(name, ty, val, body),
             ExprKind::Lit(lit) => self.infer_lit(lit),
             ExprKind::MData(_, e) => self.infer_type(e),
             ExprKind::Proj(sname, idx, e) => self.infer_proj(sname, *idx, e),
@@ -144,7 +136,12 @@ impl TypeChecker {
         self.local_ctx.remove(&fvar_name);
         // Abstract the free variable back to get forall type
         let body_type_abs = body_type.abstract_(&[fvar]);
-        Ok(Expr::forall_e(name.clone(), domain.clone(), body_type_abs, bi))
+        Ok(Expr::forall_e(
+            name.clone(),
+            domain.clone(),
+            body_type_abs,
+            bi,
+        ))
     }
 
     fn infer_pi(
@@ -202,11 +199,15 @@ impl TypeChecker {
 
         // Get the inductive type info
         let info = self.env.get(sname)?;
-        if let ConstantInfo::Inductive { ctors, num_params, .. } = info {
+        if let ConstantInfo::Inductive {
+            ctors, num_params, ..
+        } = info
+        {
             if ctors.len() != 1 {
-                return Err(KernelError::InductiveError(
-                    format!("projection on non-structure type '{}'", sname),
-                ));
+                return Err(KernelError::InductiveError(format!(
+                    "projection on non-structure type '{}'",
+                    sname
+                )));
             }
             let ctor_name = &ctors[0];
             let ctor_info = self.env.get(ctor_name)?;
@@ -224,15 +225,19 @@ impl TypeChecker {
                 if !ty.is_forall() {
                     return Err(KernelError::InductiveError("projection type error".into()));
                 }
-                ty = ty.binding_body().instantiate1(
-                    if i < e_type_args.len() { &e_type_args[i] } else { e },
-                );
+                ty = ty.binding_body().instantiate1(if i < e_type_args.len() {
+                    &e_type_args[i]
+                } else {
+                    e
+                });
             }
 
             // Skip to the idx-th field
             for i in 0..idx {
                 if !ty.is_forall() {
-                    return Err(KernelError::InductiveError("projection index out of range".into()));
+                    return Err(KernelError::InductiveError(
+                        "projection index out of range".into(),
+                    ));
                 }
                 // Each field type may depend on previous fields via projection
                 let proj_i = Expr::proj(sname.clone(), i, e.clone());
@@ -242,12 +247,15 @@ impl TypeChecker {
             if ty.is_forall() {
                 Ok(ty.binding_domain().clone())
             } else {
-                Err(KernelError::InductiveError("projection index out of range".into()))
+                Err(KernelError::InductiveError(
+                    "projection index out of range".into(),
+                ))
             }
         } else {
-            Err(KernelError::InductiveError(
-                format!("'{}' is not an inductive type", sname),
-            ))
+            Err(KernelError::InductiveError(format!(
+                "'{}' is not an inductive type",
+                sname
+            )))
         }
     }
 
@@ -271,8 +279,13 @@ impl TypeChecker {
         loop {
             match e.kind() {
                 // Already in WHNF
-                ExprKind::BVar(_) | ExprKind::FVar(_) | ExprKind::MVar(_) | ExprKind::Sort(_)
-                | ExprKind::Lam(..) | ExprKind::ForallE(..) | ExprKind::Lit(_) => return Ok(e),
+                ExprKind::BVar(_)
+                | ExprKind::FVar(_)
+                | ExprKind::MVar(_)
+                | ExprKind::Sort(_)
+                | ExprKind::Lam(..)
+                | ExprKind::ForallE(..)
+                | ExprKind::Lit(_) => return Ok(e),
 
                 // Delta reduction: unfold definitions
                 ExprKind::Const(_name, _levels) => {
@@ -386,7 +399,12 @@ impl TypeChecker {
         let name = e.const_name();
         let levels = e.const_levels();
         match self.env.find(name) {
-            Some(ConstantInfo::Definition { value, level_params, safety, .. }) => {
+            Some(ConstantInfo::Definition {
+                value,
+                level_params,
+                safety,
+                ..
+            }) => {
                 if *safety == DefinitionSafety::Unsafe {
                     return Ok(None); // Don't unfold unsafe
                 }
@@ -414,8 +432,12 @@ impl TypeChecker {
             return Ok(None);
         }
         // Check if the constructor matches the structure
-        if let Some(ConstantInfo::Constructor { induct_name, num_params, num_fields, .. }) =
-            self.env.find(s_fn.const_name())
+        if let Some(ConstantInfo::Constructor {
+            induct_name,
+            num_params,
+            num_fields,
+            ..
+        }) = self.env.find(s_fn.const_name())
         {
             if induct_name != sname {
                 return Ok(None);
@@ -458,8 +480,7 @@ impl TypeChecker {
         e.get_app_args(&mut args);
 
         // Major premise index = num_params + num_motives + num_minors + num_indices
-        let major_idx =
-            (num_params + num_motives + num_minors + num_indices) as usize;
+        let major_idx = (num_params + num_motives + num_minors + num_indices) as usize;
         if args.len() <= major_idx {
             return Ok(None);
         }
@@ -500,10 +521,12 @@ impl TypeChecker {
 
         // Apply constructor fields (skip params in major_args)
         let num_params_usize = num_params as usize;
-        for i in num_params_usize..std::cmp::min(
-            num_params_usize + rule.num_fields as usize,
-            major_args.len(),
-        ) {
+        for i in num_params_usize
+            ..std::cmp::min(
+                num_params_usize + rule.num_fields as usize,
+                major_args.len(),
+            )
+        {
             result = Expr::app(result, major_args[i].clone());
         }
 
@@ -607,7 +630,8 @@ impl TypeChecker {
         }
         // Compare bodies with a fresh variable
         let fvar_name = self.fresh_name();
-        self.local_ctx.insert(fvar_name.clone(), a.binding_domain().clone());
+        self.local_ctx
+            .insert(fvar_name.clone(), a.binding_domain().clone());
         let fvar = Expr::fvar(fvar_name.clone());
         let a_body = a.binding_body().instantiate1(&fvar);
         let b_body = b.binding_body().instantiate1(&fvar);
@@ -707,14 +731,31 @@ impl TypeChecker {
     /// Check a declaration and add it to the environment.
     pub fn check_and_add(&mut self, decl: Declaration) -> KernelResult<Environment> {
         match decl {
-            Declaration::Axiom { name, level_params, type_, is_unsafe } => {
+            Declaration::Axiom {
+                name,
+                level_params,
+                type_,
+                is_unsafe,
+            } => {
                 self.check_no_mvar_fvar(&name, &type_)?;
                 let _sort = self.check_type(&type_, &level_params)?;
-                let info = ConstantInfo::Axiom { name, level_params, type_, is_unsafe };
+                let info = ConstantInfo::Axiom {
+                    name,
+                    level_params,
+                    type_,
+                    is_unsafe,
+                };
                 self.env = self.env.add_constant(info)?;
                 Ok(self.env.clone())
             }
-            Declaration::Definition { name, level_params, type_, value, hints, safety } => {
+            Declaration::Definition {
+                name,
+                level_params,
+                type_,
+                value,
+                hints,
+                safety,
+            } => {
                 self.check_no_mvar_fvar(&name, &type_)?;
                 self.check_no_mvar_fvar(&name, &value)?;
                 let _sort = self.check_type(&type_, &level_params)?;
@@ -726,12 +767,22 @@ impl TypeChecker {
                     });
                 }
                 let info = ConstantInfo::Definition {
-                    name, level_params, type_, value, hints, safety,
+                    name,
+                    level_params,
+                    type_,
+                    value,
+                    hints,
+                    safety,
                 };
                 self.env = self.env.add_constant(info)?;
                 Ok(self.env.clone())
             }
-            Declaration::Theorem { name, level_params, type_, value } => {
+            Declaration::Theorem {
+                name,
+                level_params,
+                type_,
+                value,
+            } => {
                 self.check_no_mvar_fvar(&name, &type_)?;
                 self.check_no_mvar_fvar(&name, &value)?;
                 let _sort = self.check_type(&type_, &level_params)?;
@@ -742,11 +793,22 @@ impl TypeChecker {
                         got: val_type,
                     });
                 }
-                let info = ConstantInfo::Theorem { name, level_params, type_, value };
+                let info = ConstantInfo::Theorem {
+                    name,
+                    level_params,
+                    type_,
+                    value,
+                };
                 self.env = self.env.add_constant(info)?;
                 Ok(self.env.clone())
             }
-            Declaration::Opaque { name, level_params, type_, value, is_unsafe } => {
+            Declaration::Opaque {
+                name,
+                level_params,
+                type_,
+                value,
+                is_unsafe,
+            } => {
                 self.check_no_mvar_fvar(&name, &type_)?;
                 self.check_no_mvar_fvar(&name, &value)?;
                 let _sort = self.check_type(&type_, &level_params)?;
@@ -757,7 +819,13 @@ impl TypeChecker {
                         got: val_type,
                     });
                 }
-                let info = ConstantInfo::Opaque { name, level_params, type_, value, is_unsafe };
+                let info = ConstantInfo::Opaque {
+                    name,
+                    level_params,
+                    type_,
+                    value,
+                    is_unsafe,
+                };
                 self.env = self.env.add_constant(info)?;
                 Ok(self.env.clone())
             }
@@ -767,7 +835,9 @@ impl TypeChecker {
             }
             Declaration::InductiveDecl { .. } => {
                 // Inductive type checking is complex — placeholder for now
-                Err(KernelError::InductiveError("inductive checking not yet implemented".into()))
+                Err(KernelError::InductiveError(
+                    "inductive checking not yet implemented".into(),
+                ))
             }
         }
     }
@@ -794,7 +864,7 @@ mod tests {
     use super::*;
 
     fn setup_nat_env() -> Environment {
-        let env = Environment::new();
+        let mut env = Environment::new();
         // Nat : Type
         let nat_info = ConstantInfo::Inductive {
             name: Name::mk_simple("Nat"),
@@ -803,13 +873,16 @@ mod tests {
             num_params: 0,
             num_indices: 0,
             all: vec![Name::mk_simple("Nat")],
-            ctors: vec![Name::from_str_parts("Nat.zero"), Name::from_str_parts("Nat.succ")],
+            ctors: vec![
+                Name::from_str_parts("Nat.zero"),
+                Name::from_str_parts("Nat.succ"),
+            ],
             num_nested: 0,
             is_rec: true,
             is_unsafe: false,
             is_reflexive: false,
         };
-        let env = env.add_constant_unchecked(nat_info);
+        env.add_constant_unchecked(nat_info);
 
         // Nat.zero : Nat
         let zero_info = ConstantInfo::Constructor {
@@ -822,7 +895,7 @@ mod tests {
             num_fields: 0,
             is_unsafe: false,
         };
-        let env = env.add_constant_unchecked(zero_info);
+        env.add_constant_unchecked(zero_info);
 
         // Nat.succ : Nat → Nat
         let succ_type = Expr::forall_e(
@@ -841,7 +914,8 @@ mod tests {
             num_fields: 1,
             is_unsafe: false,
         };
-        env.add_constant_unchecked(succ_info)
+        env.add_constant_unchecked(succ_info);
+        env
     }
 
     #[test]
@@ -892,7 +966,7 @@ mod tests {
 
     #[test]
     fn test_whnf_delta() {
-        let env = setup_nat_env();
+        let mut env = setup_nat_env();
         // Add: myDef := Nat.zero
         let info = ConstantInfo::Definition {
             name: Name::mk_simple("myDef"),
@@ -902,12 +976,15 @@ mod tests {
             hints: ReducibilityHints::Regular(1),
             safety: DefinitionSafety::Safe,
         };
-        let env = env.add_constant_unchecked(info);
+        env.add_constant_unchecked(info);
         let mut tc = TypeChecker::new(env);
 
         let my_def = Expr::const_(Name::mk_simple("myDef"), vec![]);
         let reduced = tc.whnf(&my_def).unwrap();
-        assert_eq!(reduced, Expr::const_(Name::from_str_parts("Nat.zero"), vec![]));
+        assert_eq!(
+            reduced,
+            Expr::const_(Name::from_str_parts("Nat.zero"), vec![])
+        );
     }
 
     #[test]
@@ -957,7 +1034,7 @@ mod tests {
 
     #[test]
     fn test_def_eq_delta() {
-        let env = setup_nat_env();
+        let mut env = setup_nat_env();
         let zero = Expr::const_(Name::from_str_parts("Nat.zero"), vec![]);
         let info = ConstantInfo::Definition {
             name: Name::mk_simple("myZero"),
@@ -967,7 +1044,7 @@ mod tests {
             hints: ReducibilityHints::Regular(1),
             safety: DefinitionSafety::Safe,
         };
-        let env = env.add_constant_unchecked(info);
+        env.add_constant_unchecked(info);
         let mut tc = TypeChecker::new(env);
 
         let my_zero = Expr::const_(Name::mk_simple("myZero"), vec![]);
@@ -1020,7 +1097,7 @@ mod tests {
 
     #[test]
     fn test_infer_lit() {
-        let env = setup_nat_env();
+        let mut env = setup_nat_env();
         // Add String type
         let str_info = ConstantInfo::Axiom {
             name: Name::mk_simple("String"),
@@ -1028,7 +1105,7 @@ mod tests {
             type_: Expr::type_(),
             is_unsafe: false,
         };
-        let env = env.add_constant_unchecked(str_info);
+        env.add_constant_unchecked(str_info);
         let mut tc = TypeChecker::new(env);
 
         let nat_lit = Expr::lit(Literal::nat_small(42));

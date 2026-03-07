@@ -12,6 +12,7 @@ pub struct Environment {
     inner: Arc<EnvironmentInner>,
 }
 
+#[derive(Clone)]
 struct EnvironmentInner {
     constants: FxHashMap<Name, ConstantInfo>,
     quot_initialized: bool,
@@ -23,6 +24,16 @@ impl Environment {
         Environment {
             inner: Arc::new(EnvironmentInner {
                 constants: FxHashMap::default(),
+                quot_initialized: false,
+            }),
+        }
+    }
+
+    /// Create an environment from a pre-built constants map.
+    pub fn from_constants(constants: FxHashMap<Name, ConstantInfo>) -> Self {
+        Environment {
+            inner: Arc::new(EnvironmentInner {
+                constants,
                 quot_initialized: false,
             }),
         }
@@ -55,16 +66,11 @@ impl Environment {
         })
     }
 
-    /// Add a constant without checking for duplicates (for replaying .olean).
-    pub fn add_constant_unchecked(&self, info: ConstantInfo) -> Self {
-        let mut new_constants = self.inner.constants.clone();
-        new_constants.insert(info.name().clone(), info);
-        Environment {
-            inner: Arc::new(EnvironmentInner {
-                constants: new_constants,
-                quot_initialized: self.inner.quot_initialized,
-            }),
-        }
+    /// Add a constant without checking for duplicates.
+    /// Uses Arc::make_mut for copy-on-write — cheap when there's only one reference.
+    pub fn add_constant_unchecked(&mut self, info: ConstantInfo) {
+        let inner = Arc::make_mut(&mut self.inner);
+        inner.constants.insert(info.name().clone(), info);
     }
 
     /// Mark quotient types as initialized.

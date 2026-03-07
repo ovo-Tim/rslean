@@ -12,6 +12,9 @@ pub enum InterpError {
     #[error("stack overflow: eval depth exceeded {0}")]
     StackOverflow(u32),
 
+    #[error("step limit exceeded after {0} steps")]
+    StepLimitExceeded(u64),
+
     #[error("type error: {0}")]
     TypeError(String),
 

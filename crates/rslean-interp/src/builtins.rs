@@ -35,6 +35,7 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     reg(map, "Nat.xor", nat_xor);
     reg(map, "Nat.shiftLeft", nat_shift_left);
     reg(map, "Nat.shiftRight", nat_shift_right);
+    reg(map, "Nat.nextPowerOfTwo", nat_next_power_of_two);
 
     // String operations
     reg(map, "String.decEq", string_dec_eq);
@@ -81,6 +82,9 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     reg(map, "UInt64.decEq", uint64_dec_eq);
     reg(map, "UInt64.decLt", uint64_dec_lt);
     reg(map, "UInt64.decLe", uint64_dec_le);
+    reg(map, "UInt64.xor", uint64_xor);
+    reg(map, "UInt64.shiftRight", uint64_shift_right);
+    reg(map, "UInt64.toUSize", uint64_to_usize);
 
     // UInt8 / UInt16
     reg(map, "UInt8.ofNat", uint8_of_nat);
@@ -105,6 +109,7 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     reg(map, "ST.Ref.modifyGet", st_prim_ref_modify_get);
 
     // IO builtins (monadic: last arg is world token, return EStateM.Result.ok)
+    reg(map, "IO.mkRef", st_prim_mk_ref);
     reg(map, "IO.println", io_println);
     reg(map, "IO.print", io_print);
     reg(map, "IO.eprintln", io_eprintln);
@@ -117,6 +122,12 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     reg(map, "String.take", string_take);
     reg(map, "String.drop", string_drop);
     reg(map, "String.trimRight", string_trim_right);
+    reg(map, "String.atEnd", string_at_end);
+    reg(map, "String.next", string_next);
+    reg(map, "String.prev", string_prev);
+    reg(map, "String.utf8Extract", string_utf8_extract);
+    reg(map, "String.isValidPos", string_is_valid_pos);
+    reg(map, "String.set", string_set);
 
     // Thunk
     reg(map, "Thunk.pure", thunk_pure);
@@ -155,10 +166,12 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     // Additional Array builtins
     reg(map, "Array.fget", array_fget);
     reg(map, "Array.fset", array_fset);
+    reg(map, "Array.set", array_fset);
     reg(map, "Array.pop", array_pop);
     reg(map, "Array.fswap", array_fswap);
     reg(map, "Array.swap", array_fswap);
     reg(map, "Array.uget", array_uget);
+    reg(map, "Array.uset", array_uset);
 
     // Int builtins
     reg(map, "Int.ofNat", int_of_nat);
@@ -190,6 +203,7 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     reg(map, "USize.decEq", usize_dec_eq);
     reg(map, "USize.decLt", usize_dec_lt);
     reg(map, "USize.decLe", usize_dec_le);
+    reg(map, "USize.land", usize_land);
 
     // Float stubs
     reg(map, "Float.ofScientific", float_of_scientific);
@@ -349,6 +363,7 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     reg(map, "String.trim", string_trim);
     reg(map, "String.trimLeft", string_trim_left);
     reg(map, "String.toList", string_to_list);
+    reg(map, "String.crlfToLf", string_crlf_to_lf);
 
     // Option helpers used by various builtins
     reg(map, "Option.isSome", option_is_some);
@@ -368,6 +383,15 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     reg(map, "IO.asTask", io_as_task);
     reg(map, "IO.mapTask", io_map_task);
     reg(map, "IO.bindTask", io_bind_task);
+    reg(map, "IO.Promise.new", io_promise_new);
+    reg(map, "IO.Promise.result!", io_promise_result_bang);
+    reg(map, "IO.Promise.resolve", io_promise_resolve);
+    reg(map, "Task.get", task_get);
+    reg(map, "Task.pure", task_pure);
+    reg(map, "Task.bind", task_bind);
+    reg(map, "Task.map", task_map);
+    reg(map, "IO.CancelToken.new", io_cancel_token_new);
+    reg(map, "IO.CancelToken.isSet", io_cancel_token_is_set);
 
     // Version info stubs
     reg(map, "Lean.versionStringCore", lean_version_string_core);
@@ -388,6 +412,15 @@ pub fn register_builtins(map: &mut FxHashMap<Name, BuiltinFn>) {
     // Array additional
     reg(map, "Array.get", array_get_checked);
     reg(map, "Array.mkArray", array_mk_array);
+
+    // List builtins
+    reg(map, "List.replicate", list_replicate);
+    reg(map, "List.length", list_length);
+    reg(map, "List.head!", list_head_bang);
+    reg(map, "String.utf8GetAux", string_utf8_get_aux);
+
+    // Char builtins
+    reg(map, "Char.isWhitespace", char_is_whitespace);
 
     // Lean.Level constructors (needed to build Level values)
     reg(map, "Lean.mkLevelSucc", lean_mk_level_succ);
@@ -775,7 +808,7 @@ fn usize_to_nat(args: &[Value]) -> InterpResult<Value> {
 
 /// Find two Nat arguments, skipping Erased values.
 fn find_two_nats(args: &[Value]) -> InterpResult<(&BigUint, &BigUint)> {
-    let nats: Vec<&BigUint> = args.iter().filter_map(|v| v.as_nat()).collect();
+    let nats: Vec<&BigUint> = args.iter().filter_map(|v| unwrap_nat(v)).collect();
     if nats.len() >= 2 {
         Ok((nats[0], nats[1]))
     } else {
@@ -798,10 +831,20 @@ fn find_two_strs(args: &[Value]) -> InterpResult<(&str, &str)> {
     }
 }
 
+fn unwrap_nat(v: &Value) -> Option<&BigUint> {
+    match v {
+        Value::Nat(n) => Some(n.as_ref()),
+        Value::Ctor { fields, .. } if fields.len() == 1 => unwrap_nat(&fields[0]),
+        // Fin.mk(val, proof) and similar: first field is value, rest are proofs
+        Value::Ctor { fields, .. } if fields.len() >= 2 => unwrap_nat(&fields[0]),
+        _ => None,
+    }
+}
+
 fn find_last_nat(args: &[Value]) -> InterpResult<&BigUint> {
     args.iter()
         .rev()
-        .find_map(|v| v.as_nat())
+        .find_map(|v| unwrap_nat(v))
         .ok_or_else(|| InterpError::BuiltinError("expected Nat arg".into()))
 }
 
@@ -934,6 +977,28 @@ fn uint64_dec_le(args: &[Value]) -> InterpResult<Value> {
     Ok(make_decidable(a <= b))
 }
 
+fn uint64_xor(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    let a_u64: u64 = a.try_into().unwrap_or(0);
+    let b_u64: u64 = b.try_into().unwrap_or(0);
+    Ok(Value::nat_small(a_u64 ^ b_u64))
+}
+
+fn uint64_shift_right(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    let a_u64: u64 = a.try_into().unwrap_or(0);
+    let b_u64: u64 = b.try_into().unwrap_or(0);
+    let shift = (b_u64 % 64) as u32;
+    Ok(Value::nat_small(a_u64 >> shift))
+}
+
+fn uint64_to_usize(args: &[Value]) -> InterpResult<Value> {
+    // UInt64 and USize are both 64-bit, so this is effectively identity
+    let n = find_last_nat_val(args)?;
+    let v: u64 = n.try_into().unwrap_or(0);
+    Ok(Value::nat_small(v))
+}
+
 // --------------- UInt8 / UInt16 builtins ---------------
 
 fn uint8_of_nat(args: &[Value]) -> InterpResult<Value> {
@@ -985,7 +1050,7 @@ fn st_result(val: Value, world: Value) -> Value {
 }
 
 /// Wrap a result in EStateM.Result.ok (IO/EST success).
-fn io_ok(val: Value, world: Value) -> Value {
+pub(crate) fn io_ok(val: Value, world: Value) -> Value {
     Value::Ctor {
         tag: 0,
         name: Name::from_str_parts("EStateM.Result.ok"),
@@ -1004,7 +1069,7 @@ fn io_error(err: Value, world: Value) -> Value {
 }
 
 /// Extract the world token (last argument).
-fn extract_world(args: &[Value]) -> Value {
+pub(crate) fn extract_world(args: &[Value]) -> Value {
     args.last().cloned().unwrap_or(Value::Erased)
 }
 
@@ -1146,12 +1211,15 @@ fn string_is_empty(args: &[Value]) -> InterpResult<Value> {
 }
 
 fn string_get(args: &[Value]) -> InterpResult<Value> {
-    // String.get : String → Pos → Char
+    // String.get : String → Pos → Char (Pos is byte offset)
     let s = extract_str(args, 0)?;
-    let idx = find_last_nat(args)?;
-    let idx_usize: usize = idx.try_into().unwrap_or(0);
-    let ch = s.chars().nth(idx_usize).unwrap_or('\0');
-    Ok(Value::nat_small(ch as u64))
+    let pos: usize = find_last_nat(args)?.try_into().unwrap_or(0);
+    if pos < s.len() && s.is_char_boundary(pos) {
+        let ch = s[pos..].chars().next().unwrap_or('\0');
+        Ok(Value::nat_small(ch as u64))
+    } else {
+        Ok(Value::nat_small(0))
+    }
 }
 
 fn string_take(args: &[Value]) -> InterpResult<Value> {
@@ -1173,6 +1241,94 @@ fn string_drop(args: &[Value]) -> InterpResult<Value> {
 fn string_trim_right(args: &[Value]) -> InterpResult<Value> {
     let s = extract_str(args, 0)?;
     Ok(Value::string(s.trim_end()))
+}
+
+fn string_at_end(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    let pos: usize = find_last_nat(args)?.try_into().unwrap_or(usize::MAX);
+    Ok(Value::bool_(pos >= s.len()))
+}
+
+fn string_next(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    let pos: usize = find_last_nat(args)?.try_into().unwrap_or(usize::MAX);
+    let next_pos = if pos < s.len() {
+        let b = s.as_bytes()[pos];
+        let char_len = if b < 0x80 {
+            1
+        } else if b < 0xE0 {
+            2
+        } else if b < 0xF0 {
+            3
+        } else {
+            4
+        };
+        pos + char_len
+    } else {
+        pos + 1
+    };
+    Ok(Value::nat_small(next_pos as u64))
+}
+
+fn string_prev(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    let pos: usize = find_last_nat(args)?.try_into().unwrap_or(0);
+    if pos == 0 {
+        return Ok(Value::nat_small(0));
+    }
+    let bytes = s.as_bytes();
+    let mut p = pos - 1;
+    while p > 0 && (bytes[p] & 0xC0) == 0x80 {
+        p -= 1;
+    }
+    Ok(Value::nat_small(p as u64))
+}
+
+fn string_utf8_extract(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    let nats: Vec<usize> = args
+        .iter()
+        .filter_map(|v| v.as_nat().and_then(|n| n.try_into().ok()))
+        .collect();
+    let start = nats.first().copied().unwrap_or(0);
+    let end = nats.get(1).copied().unwrap_or(s.len());
+    let start = start.min(s.len());
+    let end = end.min(s.len());
+    if start >= end {
+        Ok(Value::string(""))
+    } else {
+        Ok(Value::string(&s[start..end]))
+    }
+}
+
+fn string_is_valid_pos(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    let pos: usize = find_last_nat(args)?.try_into().unwrap_or(usize::MAX);
+    let valid = pos == 0 || (pos <= s.len() && s.is_char_boundary(pos));
+    Ok(Value::bool_(valid))
+}
+
+fn string_set(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    let nats: Vec<usize> = args
+        .iter()
+        .filter_map(|v| v.as_nat().and_then(|n| n.try_into().ok()))
+        .collect();
+    let pos = nats.first().copied().unwrap_or(0);
+    let char_code = nats.get(1).copied().unwrap_or(0);
+    let new_char = char::from_u32(char_code as u32).unwrap_or('\0');
+    if pos < s.len() && s.is_char_boundary(pos) {
+        let old_char_len = s[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        let mut result = String::with_capacity(s.len());
+        result.push_str(&s[..pos]);
+        result.push(new_char);
+        if pos + old_char_len <= s.len() {
+            result.push_str(&s[pos + old_char_len..]);
+        }
+        Ok(Value::string(result))
+    } else {
+        Ok(Value::string(s))
+    }
 }
 
 // --------------- Thunk builtins ---------------
@@ -1440,6 +1596,26 @@ fn array_fset(args: &[Value]) -> InterpResult<Value> {
     Ok(Value::Array(Arc::new(new_arr)))
 }
 
+fn array_uset(args: &[Value]) -> InterpResult<Value> {
+    // Array.uset : {α} → (a : Array α) → (i : USize) → α → (h : i.toNat < a.size) → Array α
+    let arr = find_array(args)?;
+    let mut new_arr = arr.clone();
+    let nats: Vec<&BigUint> = args.iter().filter_map(|v| v.as_nat()).collect();
+    if let Some(idx) = nats.first() {
+        let idx_usize: usize = (*idx).try_into().unwrap_or(0);
+        if let Some(val) = args
+            .iter()
+            .rev()
+            .find(|v| !matches!(v, Value::Nat(_) | Value::Array(_) | Value::Erased))
+        {
+            if idx_usize < new_arr.len() {
+                new_arr[idx_usize] = val.clone();
+            }
+        }
+    }
+    Ok(Value::Array(Arc::new(new_arr)))
+}
+
 fn array_pop(args: &[Value]) -> InterpResult<Value> {
     let arr = find_array(args)?;
     let mut new_arr = arr.clone();
@@ -1689,6 +1865,13 @@ fn usize_dec_lt(args: &[Value]) -> InterpResult<Value> {
 fn usize_dec_le(args: &[Value]) -> InterpResult<Value> {
     let (a, b) = find_two_nats(args)?;
     Ok(make_decidable(a <= b))
+}
+
+fn usize_land(args: &[Value]) -> InterpResult<Value> {
+    let (a, b) = find_two_nats(args)?;
+    let a_u64: u64 = a.try_into().unwrap_or(0);
+    let b_u64: u64 = b.try_into().unwrap_or(0);
+    Ok(Value::nat_small(a_u64 & b_u64))
 }
 
 // --------------- Float stubs ---------------
@@ -4061,19 +4244,119 @@ fn io_allocprof(args: &[Value]) -> InterpResult<Value> {
 }
 
 fn io_as_task(args: &[Value]) -> InterpResult<Value> {
-    // IO.asTask runs an IO action as a "task" — we run it immediately (single-threaded)
+    eprintln!("[STUB] IO.asTask called");
     let world = extract_world(args);
     Ok(io_ok(Value::Erased, world))
 }
 
 fn io_map_task(args: &[Value]) -> InterpResult<Value> {
+    eprintln!("[STUB] IO.mapTask called");
     let world = extract_world(args);
     Ok(io_ok(Value::Erased, world))
 }
 
 fn io_bind_task(args: &[Value]) -> InterpResult<Value> {
+    eprintln!("[STUB] IO.bindTask called");
     let world = extract_world(args);
     Ok(io_ok(Value::Erased, world))
+}
+
+fn io_promise_new(args: &[Value]) -> InterpResult<Value> {
+    // IO.Promise.new : {α : Type} → [Nonempty α] → BaseIO (IO.Promise α)
+    // args: [α(Erased), Nonempty.intro(default_val), world]
+    let world = extract_world(args);
+    // Extract default value from Nonempty.intro Ctor
+    let default_val = args
+        .iter()
+        .find_map(|v| {
+            if let Value::Ctor { name, fields, .. } = v {
+                let s = name.to_string();
+                if s.contains("Nonempty") && !fields.is_empty() {
+                    Some(fields[0].clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .unwrap_or(Value::Erased);
+    let promise = Value::Ref(Arc::new(std::cell::RefCell::new(default_val)));
+    Ok(io_ok(promise, world))
+}
+
+fn io_promise_result_bang(args: &[Value]) -> InterpResult<Value> {
+    // IO.Promise.result! : {α : Type} → IO.Promise α → Task α
+    let promise = args.iter().find(|v| matches!(v, Value::Ref(_)));
+    match promise {
+        Some(r) => Ok(r.clone()),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn io_promise_resolve(args: &[Value]) -> InterpResult<Value> {
+    // IO.Promise.resolve : {α : Type} → IO.Promise α → α → BaseIO Unit
+    let world = extract_world(args);
+    if let Some(Value::Ref(r)) = args.iter().find(|v| matches!(v, Value::Ref(_))) {
+        if args.len() >= 2 {
+            let val = args[args.len() - 2].clone();
+            *r.borrow_mut() = val;
+        }
+    }
+    Ok(io_ok(Value::unit(), world))
+}
+
+fn task_get(args: &[Value]) -> InterpResult<Value> {
+    // Task.get : {α : Type} → Task α → α  (pure, not IO)
+    let task = args.iter().find(|v| matches!(v, Value::Ref(_)));
+    match task {
+        Some(Value::Ref(r)) => Ok(r.borrow().clone()),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn task_pure(args: &[Value]) -> InterpResult<Value> {
+    // Task.pure : {α : Type} → α → Task α
+    let val = if args.len() >= 2 {
+        args[1].clone()
+    } else {
+        Value::Erased
+    };
+    Ok(Value::Ref(Arc::new(std::cell::RefCell::new(val))))
+}
+
+fn task_bind(args: &[Value]) -> InterpResult<Value> {
+    // Task.bind : {α β : Type} → Task α → (α → Task β) → Option Priority → Task β
+    let task = args.iter().find(|v| matches!(v, Value::Ref(_)));
+    match task {
+        Some(r) => Ok(r.clone()),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn task_map(args: &[Value]) -> InterpResult<Value> {
+    // Task.map : {α β : Type} → (α → β) → Task α → Option Priority → Task β
+    let task = args.iter().find(|v| matches!(v, Value::Ref(_)));
+    match task {
+        Some(r) => Ok(r.clone()),
+        _ => Ok(Value::Erased),
+    }
+}
+
+fn io_cancel_token_new(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    let token = Value::Ref(Arc::new(std::cell::RefCell::new(Value::bool_(false))));
+    Ok(io_ok(token, world))
+}
+
+fn io_cancel_token_is_set(args: &[Value]) -> InterpResult<Value> {
+    let world = extract_world(args);
+    let token = args.iter().find(|v| matches!(v, Value::Ref(_)));
+    let is_set = match token {
+        Some(Value::Ref(r)) => r.borrow().clone(),
+        _ => Value::bool_(false),
+    };
+    Ok(io_ok(is_set, world))
 }
 
 fn lean_version_string_core(args: &[Value]) -> InterpResult<Value> {
@@ -4207,4 +4490,207 @@ fn lean_level_normalize(args: &[Value]) -> InterpResult<Value> {
         .map(|v| value_to_level(v))
         .unwrap_or_else(Level::zero);
     Ok(level_to_value(&l))
+}
+
+// ---------------------------------------------------------------------------
+// List builtins — short-circuit expensive recursive Lean definitions
+// ---------------------------------------------------------------------------
+
+/// `List.replicate : {α : Type u} → Nat → α → List α`
+/// Builds a cons-list of n copies directly, avoiding O(n²) Nat.brecOn interpretation.
+fn list_replicate(args: &[Value]) -> InterpResult<Value> {
+    use num_traits::ToPrimitive;
+
+    let n = args
+        .iter()
+        .find_map(|v| v.as_nat())
+        .and_then(|n| n.to_usize())
+        .unwrap_or(0);
+
+    if n > 1_000_000 {
+        return Err(InterpError::BuiltinError(format!(
+            "List.replicate: n={} exceeds safety limit",
+            n
+        )));
+    }
+
+    let val = args.last().cloned().unwrap_or(Value::Erased);
+
+    let nil = Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("List.nil"),
+        fields: vec![],
+    };
+    let mut result = nil;
+    for _ in 0..n {
+        result = Value::Ctor {
+            tag: 1,
+            name: Name::from_str_parts("List.cons"),
+            fields: vec![val.clone(), result],
+        };
+    }
+    Ok(result)
+}
+
+/// `List.length : {α : Type u} → List α → Nat`
+fn list_length(args: &[Value]) -> InterpResult<Value> {
+    let list = args
+        .last()
+        .ok_or_else(|| InterpError::BuiltinError("List.length: no arguments".to_string()))?;
+
+    let mut count: u64 = 0;
+    let mut cur = list;
+    loop {
+        match cur {
+            Value::Ctor { tag: 1, fields, .. } if fields.len() >= 2 => {
+                count += 1;
+                cur = &fields[1];
+            }
+            _ => break,
+        }
+    }
+
+    Ok(Value::nat_small(count))
+}
+
+fn string_crlf_to_lf(args: &[Value]) -> InterpResult<Value> {
+    let s = extract_str(args, 0)?;
+    Ok(Value::string(s.replace("\r\n", "\n")))
+}
+
+fn nat_next_power_of_two(args: &[Value]) -> InterpResult<Value> {
+    let n = extract_nat(args, 0)?;
+    if *n <= BigUint::from(1u32) {
+        return Ok(Value::nat_small(1));
+    }
+    let n_u64: u64 = n.try_into().unwrap_or(u64::MAX);
+    let result = n_u64.checked_next_power_of_two().unwrap_or(n_u64);
+    Ok(Value::nat_small(result))
+}
+
+/// `List.head! [Inhabited α] : List α → α`
+/// Args: [α (erased), Inhabited instance (erased), list]
+fn list_head_bang(args: &[Value]) -> InterpResult<Value> {
+    for arg in args.iter().rev() {
+        match arg {
+            Value::Ctor { tag: 1, fields, .. } if !fields.is_empty() => {
+                return Ok(fields[0].clone());
+            }
+            Value::Ctor { tag: 0, .. } => {
+                return Ok(Value::Erased);
+            }
+            _ => {}
+        }
+    }
+    Ok(Value::Erased)
+}
+
+/// `String.utf8GetAux (cs : List Char) (pos : Nat) (target : String.Pos) : Char`
+/// Walks cs tracking byte position; returns char when pos == target.
+fn string_utf8_get_aux(args: &[Value]) -> InterpResult<Value> {
+    let mut char_list: Option<&Value> = None;
+    let mut nats: Vec<&BigUint> = Vec::new();
+
+    for arg in args {
+        match arg {
+            Value::Ctor { tag: 1, name, .. }
+                if name.to_string().contains("List") || name.to_string().contains("cons") =>
+            {
+                if char_list.is_none() {
+                    char_list = Some(arg);
+                }
+            }
+            Value::Ctor { tag: 0, name, .. }
+                if name.to_string().contains("List") || name.to_string().contains("nil") =>
+            {
+                if char_list.is_none() {
+                    char_list = Some(arg);
+                }
+            }
+            _ => {
+                if let Some(n) = unwrap_nat(arg) {
+                    nats.push(n);
+                }
+            }
+        }
+    }
+
+    let cs = match char_list {
+        Some(v) => v,
+        None => return Ok(Value::Erased),
+    };
+
+    let (start_pos, target_pos) = match nats.len() {
+        0 => return Ok(Value::Erased),
+        1 => (BigUint::from(0u32), nats[0].clone()),
+        _ => (nats[0].clone(), nats[1].clone()),
+    };
+
+    utf8_get_aux_walk(cs, start_pos, &target_pos)
+}
+
+fn utf8_get_aux_walk(cs: &Value, pos: BigUint, target: &BigUint) -> InterpResult<Value> {
+    match cs {
+        Value::Ctor { tag: 1, fields, .. } if fields.len() >= 2 => {
+            let char_val = &fields[0];
+            let rest = &fields[1];
+            let codepoint = extract_char_codepoint(char_val);
+            if pos == *target {
+                return Ok(make_char(codepoint));
+            }
+            let char_size = BigUint::from(utf8_char_size(codepoint));
+            utf8_get_aux_walk(rest, pos + char_size, target)
+        }
+        _ => Ok(make_char(0)),
+    }
+}
+
+fn extract_char_codepoint(v: &Value) -> u32 {
+    match v {
+        Value::Nat(n) => {
+            let n_ref: &BigUint = n.as_ref();
+            u32::try_from(n_ref).unwrap_or(0)
+        }
+        Value::Ctor { fields, .. } if !fields.is_empty() => extract_char_codepoint(&fields[0]),
+        _ => 0,
+    }
+}
+
+fn make_char(codepoint: u32) -> Value {
+    Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("Char.mk"),
+        fields: vec![
+            Value::Nat(std::sync::Arc::new(BigUint::from(codepoint))),
+            Value::Erased,
+        ],
+    }
+}
+
+fn utf8_char_size(codepoint: u32) -> u32 {
+    if codepoint < 0x80 {
+        1
+    } else if codepoint < 0x800 {
+        2
+    } else if codepoint < 0x10000 {
+        3
+    } else {
+        4
+    }
+}
+
+fn char_is_whitespace(args: &[Value]) -> InterpResult<Value> {
+    let c = args.iter().rev().find_map(|a| match a {
+        Value::Nat(n) => Some(u32::try_from(n.as_ref()).unwrap_or(0)),
+        Value::Ctor { fields, .. } if !fields.is_empty() => {
+            Some(extract_char_codepoint(&fields[0]))
+        }
+        _ => None,
+    });
+    let codepoint = c.unwrap_or(0);
+    let is_ws = codepoint == 0x20     // space
+        || codepoint == 0x09          // tab
+        || codepoint == 0x0D          // carriage return
+        || codepoint == 0x0A; // newline
+    Ok(Value::bool_(is_ws))
 }

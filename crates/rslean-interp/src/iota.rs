@@ -67,14 +67,37 @@ pub fn apply_recursor(
 
     let major = &args[major_idx];
 
+    // Special case: iterative Nat.rec to avoid O(n) eval depth accumulation.
+    // Standard Nat.rec semantics: rec motive zero succ 0 = zero
+    //                             rec motive zero succ (n+1) = succ n (rec motive zero succ n)
+    // We compute bottom-up: result = zero; for k in 0..n: result = succ(k, result)
+    let rec_str = rec_name.to_string();
+    if rec_str == "Nat.rec" {
+        if let Value::Nat(n) = major {
+            use num_traits::ToPrimitive;
+            let zero_case = args[num_params + num_motives].clone();
+            let succ_fn = args[num_params + num_motives + 1].clone();
+
+            let n_val = n.to_u64().unwrap_or(u64::MAX).min(1_000_000);
+            let mut result = zero_case;
+            for k in 0..n_val {
+                let pred = Value::Nat(std::sync::Arc::new(num_bigint::BigUint::from(k)));
+                let s1 = interp.apply(succ_fn.clone(), pred)?;
+                result = interp.apply(s1, result)?;
+            }
+            return Ok(result);
+        }
+    }
+
     // The major premise must be a constructor value.
     let (ctor_name, ctor_fields) = match major {
         Value::Ctor { name, fields, .. } => (name.clone(), fields.clone()),
-        Value::Nat(n) => {
-            // Nat is special: 0 → Nat.zero, succ n → Nat.succ(n)
-            nat_to_ctor(n)
+        Value::Nat(n) => nat_to_ctor(n),
+        Value::String(s) => string_to_ctor(s),
+        Value::Array(ref items) => array_to_ctor(items),
+        Value::Erased => {
+            return Ok(Value::Erased);
         }
-        Value::Erased => return Ok(Value::Erased),
         _ => {
             return Err(InterpError::RecursorError(format!(
                 "major premise of {} is not a constructor: {:?}",
@@ -88,9 +111,12 @@ pub fn apply_recursor(
         .iter()
         .find(|r| r.ctor_name == ctor_name)
         .ok_or_else(|| {
+            let available: Vec<String> = rules.iter().map(|r| format!("{}", r.ctor_name)).collect();
             InterpError::RecursorError(format!(
-                "no recursor rule for constructor {} in {}",
-                ctor_name, rec_name
+                "no recursor rule for constructor {} in {} (available rules: [{}])",
+                ctor_name,
+                rec_name,
+                available.join(", ")
             ))
         })?;
 
@@ -132,7 +158,24 @@ pub fn apply_recursor(
     // values as parameters (params, motives, minors, fields). We evaluate
     // the RHS to a closure and then apply the substitution values one by one.
     let mut result = interp.eval(&rhs, &LocalEnv::new())?;
-    for v in subst {
+    for (i, v) in subst.into_iter().enumerate() {
+        if let Value::Ctor {
+            name: ref cname,
+            ref fields,
+            ..
+        } = &v
+        {
+            if false
+                && cname.to_string().contains("Result.ok")
+                && fields.len() >= 2
+                && !matches!(&fields[1], Value::Erased)
+            {
+                eprintln!(
+                    "[IOTA-APPLY-RESULT-OK] step={} rec={} subst_idx={} val={:?}",
+                    interp.total_steps, rec_name, i, v
+                );
+            }
+        }
         result = interp.apply(result, v)?;
     }
     Ok(result)
@@ -150,4 +193,44 @@ fn nat_to_ctor(n: &num_bigint::BigUint) -> (Name, Vec<Value>) {
             vec![Value::Nat(std::sync::Arc::new(pred))],
         )
     }
+}
+
+/// Convert a Value::Array to `Array.mk(data : List α)` constructor form.
+fn array_to_ctor(items: &[Value]) -> (Name, Vec<Value>) {
+    let mut list = Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("List.nil"),
+        fields: vec![],
+    };
+    for item in items.iter().rev() {
+        list = Value::Ctor {
+            tag: 1,
+            name: Name::from_str_parts("List.cons"),
+            fields: vec![item.clone(), list],
+        };
+    }
+    (Name::from_str_parts("Array.mk"), vec![list])
+}
+
+/// Convert a String value to `String.mk(data : List Char)`.
+pub(crate) fn string_to_ctor(s: &str) -> (Name, Vec<Value>) {
+    let mut list = Value::Ctor {
+        tag: 0,
+        name: Name::from_str_parts("List.nil"),
+        fields: vec![],
+    };
+    for ch in s.chars().rev() {
+        let char_val = Value::Nat(std::sync::Arc::new(num_bigint::BigUint::from(ch as u32)));
+        let char_ctor = Value::Ctor {
+            tag: 0,
+            name: Name::from_str_parts("Char.mk"),
+            fields: vec![char_val, Value::Erased],
+        };
+        list = Value::Ctor {
+            tag: 1,
+            name: Name::from_str_parts("List.cons"),
+            fields: vec![char_ctor, list],
+        };
+    }
+    (Name::from_str_parts("String.mk"), vec![list])
 }

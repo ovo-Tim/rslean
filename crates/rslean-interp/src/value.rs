@@ -68,6 +68,64 @@ pub enum FuncRef {
     },
     /// A recursor function: when fully applied, performs iota reduction.
     RecursorFn(Name, Vec<Level>),
+    /// A forwarding function: when fully applied, calls `apply(args[func_idx], args[arg_idx])`.
+    /// Used for axioms like `BaseIO.toEIO` that forward one argument to another.
+    ForwardApply {
+        name: Name,
+        arity: u32,
+        func_idx: u32,
+        arg_idx: u32,
+    },
+    /// Run an IO action synchronously and wrap the result as a Task (Ref).
+    /// Used for `BaseIO.asTask`: executes the action, then wraps the ok-value in a Ref.
+    RunAction {
+        name: Name,
+        arity: u32,
+        action_idx: u32,
+        world_idx: u32,
+    },
+    /// Chain a Task with a continuation: get Task value, apply function, run resulting IO, wrap as new Task.
+    /// Used for `BaseIO.chainTask`: arity 6 [α, β, task, f, prio, world].
+    ChainTask,
+    /// Loop continuation for `Lean.Loop.forIn`.
+    /// When applied to a `ForInStep` value, either returns `pure b` (done)
+    /// or recursively calls `bind(f () b)(cont)` (yield).
+    LoopContinuation {
+        f: Box<Value>,
+        bind_fn: Box<Value>,
+        pure_fn: Box<Value>,
+    },
+    /// Initial `Lean.Loop.forIn` invocation (arity 6).
+    /// Handled in `apply_fully` with interpreter access.
+    LoopForIn,
+    /// StateRefT'.get: arity 6 [ω, σ, m, inst, ref, world] → io_ok(ref.get(), world)
+    StateRefGet,
+    /// StateRefT'.set: arity 7 [ω, σ, m, inst, s, ref, world] → ref.set(s); io_ok(unit, world)
+    StateRefSet,
+    StateRefModifyGet,
+    StateRefRun,
+    StateRefLift,
+    IgnoreArgThenReturn {
+        val: Box<Value>,
+    },
+    EioToIoPrime,
+    /// EIO.toBaseIO: arity 4 [ε, α, act, world] → run act, wrap result in Except
+    EioToBaseIO,
+    /// IO.FS.withIsolatedStreams: arity 8 [m, α, monad, finally, lift, action, isolateStderr, world]
+    WithIsolatedStreams,
+    /// EIO.catchExceptions: arity 4 [α, act, defVal, world] → run act, on error return defVal
+    EioCatchExceptions,
+    /// Array.foldlM.loop: arity 11 [m, β, α, Monad, f, arr, stop, H, i, j, b]
+    ArrayFoldlMLoop,
+    /// Continuation for Array.foldlM.loop iteration
+    ArrayFoldlMCont {
+        f: Box<Value>,
+        arr: Arc<Vec<Value>>,
+        stop: u64,
+        current_idx: u64,
+        bind_fn: Box<Value>,
+        pure_fn: Box<Value>,
+    },
 }
 
 impl Value {

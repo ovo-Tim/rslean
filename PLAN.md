@@ -5,7 +5,7 @@
 Build a **100% memory-safe** Lean 4 proof checker in Rust. It can parse `.lean`
 files, run tactics, and verify proofs — but it is a **prover only**, not a
 general-purpose language compiler. No code generation, no manual reference
-counting, no unsafe memory management.
+counting, no unsafe memory management. (Meaning it parses a subset of Lean 4 language)
 
 Existing Lean 4 tactic/elaborator source code is **reused** — loaded from
 .olean files and interpreted in a safe Rust VM. All memory is managed by
@@ -411,6 +411,10 @@ Lean code. The Rust "bootstrap elaborator" is minimal glue that:
 2. Calls the Lean `Lean.Elab.Frontend.processCommands` in the interpreter
 3. Collects resulting declarations and feeds them to the kernel
 
+You don't have to force yourself to reuse all the Lean code. Feel free to edit it or simply rewrite in Rust if needed.
+For example, if you see lean code that's manage memory or do system calls, maybe rewrite it in rust is simpler.
+Anyway, the ultimate goal is to keep the codebase simple and clean. I give you the right to choose the proper design.
+
 **Mode B — Rust-native (fallback / bootstrapping):**
 If .olean files aren't available, use a Rust-native elaborator that can
 process a subset of Lean syntax. This is needed to bootstrap from source.
@@ -733,345 +737,91 @@ crates/rslean-interp/src/
 
 ### Phase 4.1 — IO Runtime Foundation — COMPLETE ✓ (2026-02-28)
 
-Pre-requisite work for the interpreted elaborator: fixing monadic calling
-convention, implementing missing builtins, and creating a shared loader.
-
-**63 interp tests, 139 workspace total** (up from 55/131).
-
-#### Changes
-
-**New file: `loader.rs`** — shared multi-module .olean loader
-
-Extracted from `tests.rs` into a proper public module with:
-- `find_lean_lib_dir()` — locates elan toolchain
-- `resolve_module(name, search_paths)` — Name → .olean path
-- `load_env_with_deps(root_path, search_paths)` — BFS transitive loader
-- `load_prelude_env()` — convenience: loads Init.Prelude
-- `load_module_env(module_name)` — convenience: loads by name with deps
-
-**`value.rs`** — 5 new Value variants
-
-| Variant | Purpose |
-| ------- | ------- |
-| `Int(Arc<BigInt>)` | Signed arbitrary-precision integers |
-| `ByteArray(Arc<Vec<u8>>)` | Lean ByteArray type |
-| `HashMap(Arc<RefCell<HashMapBuckets>>)` | Lean.HashMap (opaque bucket map) |
-| `Environment(Arc<Environment>)` | Kernel Environment for elaborator bridge |
-| (updated) `Nat` | Unchanged |
-
-Added helpers: `some()`, `none()`, `to_bigint()`, `HashMapBuckets` type alias.
-
-**`eval.rs`** — fix arity computation for monadic types
-
-`compute_arity_from_type` now delta-reduces type aliases (ST, EST, EIO, IO,
-BaseIO, etc.) to expose hidden ForallE binders. This is necessary because
-`ST σ α = Void σ → ST.Out σ α` — `@[extern]` builtins returning `ST σ X`
-have one more arg (the world token) than ForallE binders alone reveal.
-
-Added helpers: `get_app_head_const`, `is_function_type_alias`,
-`try_delta_reduce_type` (with fuel limit of 8 reductions).
-
-**`builtins.rs`** — monadic calling convention + ~40 new builtins
-
-*Monadic calling convention (ST/IO):*
-- Builtins receiving a world token take it as their last arg
-- Return `EStateM.Result.ok(result, world)` or `EStateM.Result.error(err, world)`
-- Helper fns: `st_result()`, `io_ok()`, `io_error()`, `extract_world()`
-- ST.Prim.mkRef/Ref.get/Ref.set/Ref.swap updated to this convention
-- IO.println/print/eprintln updated to this convention
-
-*New builtins (72 → ~112):*
-
-| Group | Builtins |
-| ----- | -------- |
-| Thunk | `pure`, `get` (eager: identity) |
-| Platform | `getIsWindows` (→ false), `getIsOSX` (→ true on macOS), `getIsEmscripten` (→ false), `getNumBits` (→ 64) |
-| IO timing | `monoMsNow`, `monoNanosNow`, `getNumHeartbeats`, `initializing` (all stubbed → 0/false) |
-| HashMap | `mkEmpty`/`empty`, `insert`, `find?`, `size`, `contains` |
-| ByteArray | `mkEmpty`, `push`, `size`, `get!` |
-| Array (extra) | `fget`, `fset`, `pop`, `fswap`/`swap`, `uget` |
-| Int | `ofNat`, `negSucc`, `add`, `sub`, `mul`, `div`, `mod`, `neg`, `decEq`, `decLe`, `decLt`, `decNonneg`, `toNat` |
-| Name | `beq`, `hash`, `mkStr`, `mkNum` |
-| USize (extra) | `add`, `sub`, `mul`, `div`, `mod`, `decEq`, `decLt`, `decLe` |
-| Float | `ofScientific`, `toString` (stubs) |
-
-*HashMap implementation:* bucket-chained hash map keyed by `value_hash()`
-(structural hash of Nat/String/Ctor). Supports structural equality via
-`value_eq()`. Represented as `Arc<RefCell<FxHashMap<u64, Vec<(Value, Value)>>>>`.
-
-**`tests.rs`** — 8 new tests
-
-| Test | What it verifies |
-| ---- | ---------------- |
-| `test_st_ref_monadic_convention` | ST.Prim.mkRef returns EStateM.Result.ok wrapping Ref |
-| `test_io_println_monadic_convention` | IO.println returns EStateM.Result.ok wrapping Unit |
-| `test_hashmap_operations` | create, insert, find?, size, Option.none/some |
-| `test_int_arithmetic` | Int add/sub/mul/neg |
-| `test_bytearray_operations` | mkEmpty, push, size, get! |
-| `test_arity_computation_monadic` | arity fix doesn't crash on real .olean types |
-| `test_loader_module` | `loader::load_prelude_env()` works |
-| `test_loader_module_with_deps` | `loader::load_module_env()` loads transitive deps |
-
-#### What is NOT yet done (still needed for Phase 4 Mode A)
-
-- **ST.Ref.modifyGet** — requires interpreter to apply a closure arg; stubbed
-- **Expr builtins** (instantiate1, instantiateRev, abstract, etc.) — needed
-  for elaborator kernel bridge
-- **Environment bridge builtins** (Environment.find, addDeclCore, Kernel.isDefEq)
-- **IO monad end-to-end test** — evaluating `IO.println "hello"` through the
-  real .olean definitions (requires correct arity for all IO primitives)
-
----
+Monadic calling convention (ST/IO world token), `loader.rs` module,
+5 new Value variants (Int, ByteArray, HashMap, Environment, Ref), and
+~40 new builtins (Thunk, Platform, IO timing, HashMap, ByteArray, Array,
+Int, Name, USize, Float). Arity computation fixed for monadic type aliases.
+63 interp tests, 139 workspace total.
 
 ### Phase 4.2 — Structural Builtins + Integration Tests — COMPLETE ✓ (2026-02-28)
 
-Lean.Expr/Name/Level structural builtins, Environment bridge stubs,
-IO handle builtins, extra String/Option helpers, full-library loader, and
-end-to-end IO monad tests.
-
-**67 interp tests, 143 workspace total** (up from 63/139).
-
-#### Changes
-
-**`loader.rs`** — added `load_all_init_modules()`
-
-```rust
-pub fn load_all_init_modules() -> Option<Environment> {
-    load_module_env("Init")
-}
-```
-
-Loads the full `Init` library transitively by loading the top-level `Init`
-module (which imports all Init.* sub-modules). Marked `#[ignore]` in tests
-because it's too heavy for regular CI (stack overflow risk with deep recursion).
-
-**`builtins.rs`** — ~40 new builtins (total ~112 → ~150+)
-
-*Lean.Expr structural ops:*
-
-| Builtin | Action |
-| ------- | ------ |
-| `Lean.Expr.eqv`, `lt`, `hash` | Structural equality/ordering/hash on Value::Ctor Expr |
-| `Lean.Expr.is{BVar,FVar,MVar,Sort,Const,App,Lambda,Forall,Let,Lit,MData,Proj}` | Tag predicate → Bool |
-| `Lean.Expr.bvar!`, `fvarId!`, `mvarId!` | Field accessors |
-| `Lean.Expr.hasLooseBVars`, `looseBVarRange`, `hasFVar`, `hasMVar`, `approxDepth` | Metadata queries |
-| `lean_mk_bvar/fvar/mvar/sort/const/app/app2/app3/appN/lambda/forall/let/lit/mdata/proj` | Ctor builders |
-| `Lean.Expr.headBeta`, `getAppNumArgs`, `dbgToString`, `ctorIdx` | Utilities |
-
-*Lean.Name structural ops:*
-
-| Builtin | Action |
-| ------- | ------ |
-| `Lean.Name.beq`, `hash` | Equality/hash |
-| `Lean.Name.str`, `num` | Build hierarchical names |
-| `Lean.Name.isAnonymous`, `isStr`, `isNum` | Tag predicates |
-| `Lean.Name.getString!`, `getNum!` | Field accessors |
-| `Lean.Name.append`, `toString`, `quickLt` | Utilities |
-
-*Lean.Level structural ops:*
-
-| Builtin | Action |
-| ------- | ------ |
-| `Lean.Level.beq`, `hash` | Equality/hash |
-| `Lean.Level.isZero`, `isSucc`, `isMax`, `isIMax`, `isParam`, `isMVar` | Tag predicates |
-| `Lean.Level.succ!`, `max!` / `imax!` fields, `param!`, `mvar!` | Field accessors |
-
-*Environment bridge stubs:*
-- `lean_env_find`, `Lean.Environment.contains`
-- `Lean.Environment.isConstructor`, `isInductive`, `isRecursor`
-- `Lean.PersistentHashMap.*`, `Lean.RBTree.*` (no-op stubs)
-
-*IO extras:*
-- `IO.getStdout`, `IO.getStderr`, `IO.getStdin` (return Erased handle)
-- `IO.Handle.putStr`, `IO.Handle.putStrLn`, `IO.Handle.flush`
-- `IO.getEnv`, `IO.isEOF`, `IO.getLine`, `IO.Error.toString`, `IO.Error.userError`
-
-*String extras:*
-- `String.toNat?`, `String.toInt?`, `String.startsWith`, `String.endsWith`
-- `String.contains`, `String.splitOn`, `String.replace`, `String.trim`
-- `String.trimLeft`, `String.toList`
-- `Option.isSome`, `Option.isNone`, `Option.get!`
-
-*Helper functions added:*
-- `ctor_tag(v)` — extract tag from Ctor, or 0 for Nat/String
-- `ctor_field(v, i)` — extract i-th field from Ctor
-- `value_lt(a, b)` — structural less-than for Name.quickLt etc.
-
-**`tests.rs`** — 6 new tests (67 total, 1 ignored)
-
-| Test | What it verifies |
-| ---- | ---------------- |
-| `test_loader_all_init_modules` | `load_all_init_modules()` loads Init.* (ignored: heavy) |
-| `test_io_monad_world_token` | IO.println applied to world token returns `EStateM.Result.ok(Unit, world)` |
-| `test_st_ref_full_monadic` | mkRef then Ref.get round-trip through monadic convention |
-| `test_lean_expr_builtins_via_eval` | Lean.Expr.isBVar/isFVar/bvar! on Value::Ctor |
-| `test_lean_name_builtins` | Lean.Name.str, isAnonymous |
-| (corrected) | `EStateM.Result.ok` is tag 0 (first ctor), not tag 1 |
-
-**Key bug fix:** `EStateM.Result.ok` is the first constructor (tag 0), not tag 1.
-Corrected in test assertions.
-
-**Stack overflow fix in `rslean-olean` deserializer:**
-
-`deser_expr` was deeply recursive — each `App`, `Lam`, `ForallE`, `LetE` node
-made 2-3 recursive calls, overflowing on deeply nested expressions in large
-modules. Fixed by converting the four recursive cases to iterative spine/chain
-unrolling:
-
-- **App** (`deser_app_spine`): Iteratively follows the left-recursive fn
-  position collecting `(pos, arg_ref)` pairs, then rebuilds from the leaf.
-- **Lam** (`deser_lam_chain`): Iteratively follows body position collecting
-  binder info, then reconstructs from innermost to outermost.
-- **ForallE** (`deser_forall_chain`): Same pattern as Lam.
-- **LetE** (`deser_let_chain`): Same pattern, with type + val at each level.
-
-All intermediate nodes are cached, preserving sharing. The remaining recursive
-calls (for args, types, values) are bounded since those sub-expressions are
-typically shallow. `test_loader_all_init_modules` now passes (~6 min, loads
-the full Init library).
-
-#### What is NOT yet done (still needed for Phase 4 Mode A)
-
-- **Expr.instantiate1 / instantiateRev / abstract** — manipulation builtins
-  needed when elaborator performs substitution via Rust kernel
-- **Real Environment bridge** — `lean_env_find` etc. currently return Erased;
-  need to bridge to the real `Arc<Environment>` kept in `Value::Environment`
-- **Call Lean elaborator** — load `Lean.Elab.Frontend.processCommands` and
-  attempt to call it with a stub Syntax value
-
----
+Lean.Expr/Name/Level structural builtins (~50 ops: tag predicates, field
+accessors, constructors, equality/hash), Environment bridge stubs, IO handle
+builtins, String/Option helpers. Fixed `EStateM.Result.ok` tag (0, not 1).
+Fixed .olean deserializer stack overflow (iterative App/Lam/ForallE/LetE
+unrolling). 67 interp tests, 143 workspace total.
 
 ### Phase 4.3 — Expr Manipulation + Environment Bridge — COMPLETE ✓ (2026-02-28)
 
-Expr substitution/abstraction builtins, Value↔Expr conversion, real
-Environment bridge, and diagnostic tracing.
+Value↔Expr/Name/Level conversion functions, 7 Expr manipulation builtins
+(instantiate1, instantiateRev, abstract, liftLooseBVars, lowerLooseBVars,
+instantiateLevelParams, instantiateRange), real Environment bridge (find?,
+contains, isConstructor, isInductive, isRecursor). Diagnostic trace: 2277/2376
+(95.8%) Init.Prelude definitions evaluate successfully, zero missing builtins.
+73 interp tests, 149 workspace total.
 
-**73 interp tests, 149 workspace total** (up from 67/143).
+### Phase 4.4 — Kernel Bridge + Lean Library Loading — COMPLETE ✓
 
-#### Changes
+**Environment**: 174,018 constants loaded (~3.5s). 8362/8362 (100.0%)
+non-auxiliary definitions evaluate successfully. Zero missing builtins.
+269 builtins total. 73 tests (+ 1 integration test).
 
-**Value ↔ Expr/Name/Level conversion functions** (`builtins.rs`):
-- `value_to_expr(v)` — converts `Value::Ctor` (Lean.Expr representation) or
-  `Value::KernelExpr` to `rslean_expr::Expr`
-- `expr_to_value(e)` — converts `Expr` back to `Value::Ctor` tree
-- `value_to_name(v)` / `name_to_value(n)` — Name conversion
-- `value_to_level(v)` / `level_to_value(l)` — Level conversion
-- `value_to_binder_info` / `binder_info_to_value` — BinderInfo conversion
-- `value_to_literal` / `literal_to_value` — Literal conversion
-- `value_list_to_vec` / `vec_to_value_list` — List ↔ Vec conversion
+**Elaboration**: `#check Nat`, `#check Nat.add`, `#check @List.map`,
+`def foo := 42`, `theorem : True := trivial`, `theorem : 1+1=2 := rfl`,
+`example : 2+3=5 := by decide`, and induction tactics all succeed,
+returning `Value::Environment`. Phase 4.4 milestone achieved.
 
-**Expr manipulation builtins** (7 new):
+#### Infrastructure
 
-| Builtin | Operation |
-| ------- | --------- |
-| `Lean.Expr.instantiate1` | Replace BVar(0) with a given Expr |
-| `Lean.Expr.instantiate` | Replace BVar(i) with Array Expr[i] |
-| `Lean.Expr.instantiateRev` | Reverse substitution (subst[n-1] → BVar(0)) |
-| `Lean.Expr.abstract` | Replace Expr occurrences with BVar indices |
-| `Lean.Expr.instantiateLevelParams` | Substitute universe level params |
-| `Lean.Expr.liftLooseBVars` | Shift de Bruijn indices up |
-| `Lean.Expr.lowerLooseBVars` | Shift de Bruijn indices down |
-
-Also fixed `Lean.Expr.headBeta` — was a stub, now actually calls
-`Expr::head_beta_reduce()` via `value_to_expr` / `expr_to_value` round-trip.
-
-**Real Environment bridge** (5 builtins updated):
-
-| Builtin | Before | After |
-| ------- | ------ | ----- |
-| `Lean.Environment.find?` | Always returned `None` | Looks up constants in `Value::Environment`, converts `ConstantInfo` to full Ctor tree |
-| `Lean.Environment.contains` | Always `false` | Checks `env.find(&name).is_some()` |
-| `Lean.Environment.isConstructor` | Always `false` | Checks `ConstantInfo::Constructor` |
-| `Lean.Environment.isInductive` | Always `false` | Checks `ConstantInfo::Inductive` |
-| `Lean.Environment.isRecursor` | Always `false` | Checks `ConstantInfo::Recursor` |
-
-`constant_info_to_value` builds the full nested Lean 4 ConstantInfo Ctor tree
-(ConstantInfo → *Val → ConstantVal) with correct tags and field indices for
-projection.
-
-**Diagnostic tracing**: `test_trace_missing_builtins` evaluates all 2376
-definitions from Init.Prelude — 2277 (95.8%) succeed. Remaining 99 failures
-are "kernel unknown constant" (auxiliary `_closed_1`/`_lambda_N` constants
-from unloaded dependencies) and one projection type error. **Zero missing
-builtins**.
-
-**New tests** (6 new, 73 total):
-
-| Test | What it verifies |
-| ---- | ---------------- |
-| `test_expr_instantiate1` | BVar(0) replaced with Const("Nat") |
-| `test_expr_abstract` | FVar("x") abstracted to BVar(0) |
-| `test_expr_lift_lower_bvars` | BVar(2) lifted to BVar(5), lowered to BVar(1) |
-| `test_expr_head_beta_real` | (λx. x) Nat beta-reduces to Nat |
-| `test_env_find_bridge` | env.find?("Nat.add") returns Some, env.contains works, nonexistent returns None |
-| `test_trace_missing_builtins` | Diagnostic: evaluates all Prelude definitions, logs missing builtins |
-
-### Phase 4.4 — Kernel Bridge + Lean Library Loading — IN PROGRESS
-
-Full Init library trace: **8362/8362 (100.0%)** non-auxiliary definitions evaluate
-successfully (up from 76.7%). Zero missing builtins.
-
-Key fixes for 100% Init evaluation:
 - **Compiler auxiliary detection** (`is_compiler_aux`): `_cstage1`, `_cstage2`,
   `_closed_N`, `_lambda_N`, `_neutral`, `_rarg` → `Value::Erased`
-- **Nat projection fix**: field 0 returns Nat itself, field 1 returns Erased
-  (fixes Char.0/Subtype.0 projections)
-- **Erased builtin fallback**: when a builtin fails and any arg is Erased,
-  return Erased (proof-irrelevant context)
-- **Cache size limit**: `const_cache` capped at 10K entries to prevent OOM
-- **MAX_EVAL_DEPTH**: increased from 256 to 512
-- **Array find Ctor-unwrap**: `find_array` looks inside `Value::Ctor` fields
-  for nested `Value::Array` (fixes FloatArray.mk etc.)
+- **Nat projection fix**, **Erased builtin fallback**, **Cache size limit** (10K)
+- **MAX_EVAL_DEPTH**: increased 256 → 512, stack 256MB
+- Kernel bridge: `Lean.Kernel.isDefEq`, `whnf`, `check`, `Environment.addDeclCore`
+- Additional Expr builtins: `quickLt`, `equal`, `hasLooseBVar`, range ops
+- Level constructors: `mkLevelSucc`, `mkLevelMax`, `mkLevelIMax`, `mkLevelParam`, `mkLevelMVar`, `Level.normalize`
+- Misc stubs: `strictOr`, `strictAnd`, `ptrAddrUnsafe`, `IO.checkCanceled`, etc.
+- Loader: `load_lean_library()`, `load_modules_env()`, `process_lean_input()`
 
-**Kernel bridge builtins** (4 new):
+#### Runtime Fixes (elaboration path)
 
-| Builtin | Operation |
-| ------- | --------- |
-| `Lean.Kernel.isDefEq` | Calls `TypeChecker::is_def_eq`, returns `Except` |
-| `Lean.Kernel.whnf` | Calls `TypeChecker::whnf`, returns `Except` |
-| `Lean.Kernel.check` | Calls `TypeChecker::infer_type`, returns `Except` |
-| `Lean.Environment.addDeclCore` | Stub — will call `check_and_add` |
+- **O(n²) Environment building** → `Arc::make_mut` for constant insertion (174K loads in 3.4s)
+- **`ite`/`dite` short-circuit evaluation** — avoids evaluating both branches
+- **`io_promise_new`** — extracts Nonempty default value from Ctor fields[0]
+  instead of storing `Ref(Erased)`
+- **`task_get`** — returns value directly (pure function, not IO); was
+  incorrectly wrapping in `io_ok(val, world)` creating 2-field struct
+- **`BaseIO.asTask`** → `FuncRef::RunAction`: runs IO action synchronously,
+  wraps result in Ref, returns `io_ok(Ref(val), world')`
+- **`BaseIO.chainTask`** → `FuncRef::ChainTask`: chains Task with continuation,
+  runs resulting IO synchronously, wraps in new Task
+- **App chain flattening** — flatten left-spine App chains in `eval_inner()` to
+  avoid O(N) native recursion depth. Converts deeply nested `do`-notation
+  expansion into iterative evaluation.
+- **LetE chain flattening** — flatten sequential let-binding chains into
+  iterative evaluation loop.
+- **`EStateM.Result` applied as function** — pass-through in `apply()`
+- **Iterative `Nat.rec`** — bottom-up computation, constant eval depth
+- **`Array.foldlM.loop`** → `ArrayFoldlMLoop`/`ArrayFoldlMCont` FuncRef builtins
+- **`eval_proj` returns Erased** for out-of-range projections
+- **`String.rec`** handles `Value::String` (iota reduction)
+- **`unwrap_nat` for multi-field Ctors** (UInt32/BitVec/Fin unwrapping)
+- Additional builtins: `List.head!`, `Lean.Loop.forIn`, `String.utf8GetAux`,
+  `Char.isWhitespace`, `USize.land`, `UInt64.xor/shiftRight/toUSize`, `Array.uset`
+- FuncRef axioms: `StateRefT'.get/set`, `EIO.toBaseIO`, `IO.FS.withIsolatedStreams`,
+  `EIO.catchExceptions`
 
-**Additional Expr builtins** (6 new):
+#### Milestone Achieved: Full Elaboration Pipeline
 
-| Builtin | Operation |
-| ------- | --------- |
-| `Lean.Expr.quickLt` | Compare by internal hash |
-| `Lean.Expr.equal` | Structural equality |
-| `Lean.Expr.hasLooseBVar` | Check specific BVar index |
-| `Lean.Expr.instantiateRange` | Range substitution |
-| `Lean.Expr.instantiateRevRange` | Reverse range substitution |
-| `Lean.Expr.abstractRange` | Range abstraction |
+All test inputs elaborate successfully and return `Value::Environment`:
 
-**Lean.Level constructors** (6 new): `mkLevelSucc`, `mkLevelMax`, `mkLevelIMax`,
-`mkLevelParam`, `mkLevelMVar`, `Level.normalize`.
-
-**Misc stubs** (~20 new): `strictOr`, `strictAnd`, `ptrAddrUnsafe`,
-`isExclusiveObj`, `IO.checkCanceled`, `IO.getRandomBytes`, `IO.timeit`,
-`IO.asTask/mapTask/bindTask`, version info, ShareCommon, etc.
-
-**Loader**: `load_lean_library()`, `load_modules_env()` for loading
-Lean.* and arbitrary module sets.
-
-**`Interpreter::process_lean_input()`** — public API that calls
-`Lean.Elab.process : String → Environment → Options → Option String → IO (Environment × MessageLog)`
-from the loaded .olean environment. Constructs argument Values (empty KVMap for
-options, Option.some for filename), applies the world token for IO, and extracts
-the resulting `(Environment, MessageLog)` pair from the EStateM.Result.
-
-**269 builtins total** (up from 235). **73 tests, 5 ignored**.
-
-#### Next steps for Phase 4 Mode A
-
-1. ~~Fix stack overflow~~ — DONE
-2. ~~Expr manipulation builtins~~ — DONE
-3. ~~Environment bridge~~ — DONE
-4. ~~Missing builtins discovery~~ — DONE (zero missing)
-5. ~~Kernel bridge builtins~~ — DONE
-6. ~~Full Init library trace~~ — DONE (100.0% success, up from 76.7%)
-7. ~~Load Lean.Elab.Frontend and trace missing builtins~~ — DONE
-8. ~~Implement critical elaborator builtins~~ — DONE (compiler aux, Nat proj, erased fallback)
-9. ~~`Lean.Elab.process` stub~~ — DONE (`process_lean_input` + `test_process_lean_input`)
-10. Run `test_process_lean_input` to discover runtime failures in elaborator path
-11. Implement missing builtins/features discovered by step 10
-12. Successfully elaborate a simple Lean input (`#check Nat`) end-to-end
+```
+#check Nat                          →  7,292 steps ✓
+#check Nat.add                      →  5,759 steps ✓
+#check @List.map                    →  6,307 steps ✓
+def foo := 42                       →  5,485 steps ✓
+theorem t1 : True := trivial        →  9,595 steps ✓
+theorem t2 : 1 + 1 = 2 := rfl      →  9,869 steps ✓
+example : 2 + 3 = 5 := by decide   → 10,691 steps ✓
+induction tactic with simp          → 33,587 steps ✓
+```

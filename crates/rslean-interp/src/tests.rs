@@ -3067,79 +3067,297 @@ fn test_load_lean_library() {
 #[test]
 #[ignore = "Heavy test: loads Lean.Elab.Frontend (~10min). Run with: cargo test -p rslean-interp -- --ignored test_process_lean_input"]
 fn test_process_lean_input() {
-    let start = std::time::Instant::now();
+    let builder = std::thread::Builder::new().stack_size(256 * 1024 * 1024);
+    let handler = builder
+        .spawn(|| {
+            let start = std::time::Instant::now();
+            let env = match loader::load_module_env("Lean.Elab.Frontend") {
+                Some(e) => e,
+                None => {
+                    eprintln!("Skipping test: no Lean toolchain found");
+                    return;
+                }
+            };
+            eprintln!(
+                "Loaded Lean.Elab.Frontend in {:.1}s",
+                start.elapsed().as_secs_f64()
+            );
+
+            let mut total_constants = 0u64;
+            env.for_each_constant(|_| total_constants += 1);
+            eprintln!("Total constants in environment: {}", total_constants);
+
+            let check_names = [
+                "Lean.Loop.forIn",
+                "Lean.Loop.forIn._unsafe_rec",
+                "List.head!",
+                "List.head!._unsafe_rec",
+                "String.utf8GetAux",
+                "String.utf8GetAux._unsafe_rec",
+                "Pos.Raw.utf8GetAux",
+                "Array.forIn'.loop",
+                "Array.forIn'.loop._unsafe_rec",
+            ];
+            for n in &check_names {
+                let name = Name::from_str_parts(n);
+                match env.find(&name) {
+                    Some(ci) => {
+                        let kind = match ci {
+                            rslean_expr::ConstantInfo::Axiom { .. } => "axiom",
+                            rslean_expr::ConstantInfo::Definition { .. } => "def",
+                            rslean_expr::ConstantInfo::Theorem { .. } => "thm",
+                            rslean_expr::ConstantInfo::Opaque { .. } => "opaque",
+                            rslean_expr::ConstantInfo::Constructor { .. } => "ctor",
+                            rslean_expr::ConstantInfo::Inductive { .. } => "ind",
+                            rslean_expr::ConstantInfo::Recursor { .. } => "rec",
+                            rslean_expr::ConstantInfo::Quot { .. } => "quot",
+                        };
+                        eprintln!("[ENV] {} : {}", n, kind);
+                    }
+                    None => eprintln!("[ENV] {} : NOT FOUND", n),
+                }
+            }
+
+            let mut interp = Interpreter::new(env);
+            interp.trace_consts = true;
+            // Use 10M step limit for diagnostics — will hit StepLimitExceeded if looping
+            interp.max_steps = 500_000;
+
+            let test_inputs = [
+                ("#check Nat", "basic type check"),
+                ("#check Nat.add", "function check"),
+                ("#check @List.map", "polymorphic function check"),
+                ("def foo := 42", "simple definition"),
+                ("theorem t1 : True := trivial", "trivial theorem"),
+                ("theorem t2 : 1 + 1 = 2 := rfl", "rfl proof"),
+                ("example : 2 + 3 = 5 := by decide", "tactic proof (decide)"),
+                ("example : ∀ n : Nat, n + 0 = n := by intro n; induction n with\n| zero => rfl\n| succ n ih => simp [Nat.succ_add, ih]", "induction tactic"),
+            ];
+
+            for (input, desc) in &test_inputs {
+                interp.total_steps = 0;
+                let call_start = std::time::Instant::now();
+                eprintln!("\n--- Testing: {} ---", desc);
+                eprintln!("  Input: {:?}", input);
+                match interp.process_lean_input(input, "<test>") {
+                    Ok((env_val, _msg_val)) => {
+                        eprintln!(
+                            "  SUCCESS in {:.1}s ({} steps)",
+                            call_start.elapsed().as_secs_f64(),
+                            interp.total_steps
+                        );
+                        match &env_val {
+                            Value::Environment(_) => eprintln!("  -> Got Value::Environment"),
+                            Value::Ctor { name, tag, fields, .. } => {
+                                eprintln!(
+                                    "  -> Got Ctor({}, tag={}, {} fields)",
+                                    name, tag, fields.len()
+                                );
+                            }
+                            _ => eprintln!("  -> Got {:?}", env_val),
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "  FAILED in {:.1}s ({} steps): {}",
+                            call_start.elapsed().as_secs_f64(),
+                            interp.total_steps,
+                            e
+                        );
+                        let top = interp.top_evaluated_consts(10);
+                        eprintln!("  Top evaluated constants:");
+                        for (name, count) in &top {
+                            eprintln!("    {} — {} times", name, count);
+                        }
+                    }
+                }
+            }
+
+            eprintln!("Total test time: {:.1}s", start.elapsed().as_secs_f64());
+        })
+        .expect("failed to spawn test thread");
+    handler.join().expect("test thread panicked");
+}
+
+#[test]
+#[ignore]
+fn test_debug_cases_on() {
+    use rslean_name::Name;
+
     let env = match loader::load_module_env("Lean.Elab.Frontend") {
-        Some(e) => e,
+        Some(env) => env,
         None => {
-            eprintln!("Skipping test: no Lean toolchain found");
+            eprintln!("SKIP: could not load Lean.Elab.Frontend");
             return;
         }
     };
-    eprintln!(
-        "Loaded Lean.Elab.Frontend in {:.1}s",
-        start.elapsed().as_secs_f64()
-    );
 
-    let mut total_constants = 0u64;
-    env.for_each_constant(|_| total_constants += 1);
-    eprintln!("Total constants in environment: {}", total_constants);
+    // Check EStateM-related constants + Pure/Monad instances
+    let names_to_check = [
+        "EStateM.Result.casesOn",
+        "EStateM.Result.rec",
+        "EStateM.bind",
+        "EStateM.bind.match_1",
+        "EStateM.pure",
+        "EStateM.map",
+        "EStateM.instMonadEStateM",
+        "instMonadEStateM",
+        "EStateM.instMonad",
+        "Pure.pure",
+        "Monad.pure",
+        "Applicative.toPure",
+        "instMonadEIO",
+        "EIO.instMonad",
+        "EIO.instMonadEIO",
+        "IO.instMonadIO",
+        "instMonadIO",
+        "Lean.Elab.process",
+    ];
 
-    let mut interp = Interpreter::new(env);
-
-    let input = "#check Nat";
-    let file_name = "<test>";
-    eprintln!("Calling Lean.Elab.process with input: {:?}", input);
-
-    let call_start = std::time::Instant::now();
-    match interp.process_lean_input(input, file_name) {
-        Ok((env_val, msg_val)) => {
-            eprintln!("SUCCESS in {:.1}s", call_start.elapsed().as_secs_f64());
-            eprintln!(
-                "  Environment result: {:?}",
-                std::mem::discriminant(&env_val)
-            );
-            eprintln!(
-                "  MessageLog result:  {:?}",
-                std::mem::discriminant(&msg_val)
-            );
-            match &env_val {
-                Value::Environment(_) => eprintln!("  -> Got Value::Environment (ideal)"),
-                Value::Ctor {
-                    name, tag, fields, ..
-                } => {
+    for name_str in &names_to_check {
+        let name = Name::from_str_parts(name_str);
+        match env.find(&name) {
+            Some(info) => {
+                let kind = match info {
+                    rslean_expr::ConstantInfo::Axiom { .. } => "Axiom",
+                    rslean_expr::ConstantInfo::Definition { .. } => "Definition",
+                    rslean_expr::ConstantInfo::Theorem { .. } => "Theorem",
+                    rslean_expr::ConstantInfo::Opaque { .. } => "Opaque",
+                    rslean_expr::ConstantInfo::Quot { .. } => "Quot",
+                    rslean_expr::ConstantInfo::Inductive { .. } => "Inductive",
+                    rslean_expr::ConstantInfo::Constructor { .. } => "Constructor",
+                    rslean_expr::ConstantInfo::Recursor { .. } => "Recursor",
+                };
+                eprintln!(
+                    "{}: {} (level_params: {:?})",
+                    name_str,
+                    kind,
+                    info.level_params()
+                );
+                if let rslean_expr::ConstantInfo::Recursor {
+                    num_params,
+                    num_motives,
+                    num_minors,
+                    num_indices,
+                    rules,
+                    ..
+                } = info
+                {
                     eprintln!(
-                        "  -> Got Ctor({}, tag={}, {} fields)",
-                        name,
-                        tag,
-                        fields.len()
+                        "  params={} motives={} minors={} indices={} rules={}",
+                        num_params,
+                        num_motives,
+                        num_minors,
+                        num_indices,
+                        rules.len()
                     );
+                    for r in rules {
+                        eprintln!("  rule: ctor={} fields={}", r.ctor_name, r.num_fields);
+                    }
                 }
-                _ => eprintln!("  -> Got {:?}", env_val),
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "FAILED in {:.1}s: {}",
-                call_start.elapsed().as_secs_f64(),
-                e
-            );
-            match &e {
-                InterpError::UnknownConstant(name) => {
-                    eprintln!("  Missing constant: {}", name);
-                    eprintln!("  This indicates a missing builtin or unloaded module.");
-                }
-                InterpError::StackOverflow(depth) => {
-                    eprintln!("  Stack overflow at depth {}", depth);
-                }
-                InterpError::TypeError(msg) => {
-                    eprintln!("  Type error: {}", msg);
-                }
-                _ => {
-                    eprintln!("  Error details: {:?}", e);
+                if let rslean_expr::ConstantInfo::Definition { value, .. } = info {
+                    eprintln!("  body: {:?}", value);
                 }
             }
+            None => eprintln!("{}: NOT FOUND", name_str),
         }
     }
 
-    eprintln!("Total test time: {:.1}s", start.elapsed().as_secs_f64());
+    // Search for constants containing relevant patterns
+    let patterns = ["EStateM.pure", "instMonad", "Pure", "EIO"];
+    for pat in &patterns {
+        let mut found = Vec::new();
+        env.for_each_constant(|info| {
+            let n = info.name().to_string();
+            if n.contains(pat) && !n.contains("_cstage") && !n.contains("_closed") {
+                found.push(n);
+            }
+        });
+        found.sort();
+        found.truncate(15);
+        if !found.is_empty() {
+            eprintln!("\nConstants matching '{}' ({} found):", pat, found.len());
+            for f in &found {
+                eprintln!("  {}", f);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_env_search() {
+    let env = loader::load_module_env("Lean.Elab.Frontend").expect("load env");
+
+    let patterns = vec![
+        "processCommands",
+        "processCommand",
+        "runFrontend",
+        "elabCommand",
+        "Lean.Elab.process",
+        "Lean.Elab.Frontend",
+        "asTask",
+        "Task.spawn",
+        "IO.Promise",
+        "BaseIO.asTask",
+    ];
+
+    for pattern in &patterns {
+        let mut found = Vec::new();
+        env.for_each_constant(|info| {
+            let s = info.name().to_string();
+            if s.contains(pattern) {
+                let kind = if info.is_axiom() {
+                    "axiom"
+                } else if info.is_definition() {
+                    "def"
+                } else if info.is_theorem() {
+                    "thm"
+                } else if info.is_opaque() {
+                    "opaque"
+                } else if info.is_constructor() {
+                    "ctor"
+                } else if info.is_recursor() {
+                    "rec"
+                } else if info.is_inductive() {
+                    "ind"
+                } else {
+                    "other"
+                };
+                if !s.contains("_cstage")
+                    && !s.contains("_closed")
+                    && !s.contains("_rarg")
+                    && !s.contains("_neutral")
+                    && !s.contains("match_")
+                    && !s.contains("proof_")
+                {
+                    found.push(format!("{} [{}]", s, kind));
+                }
+            }
+        });
+        found.sort();
+        if !found.is_empty() {
+            eprintln!("\n=== Pattern: '{}' ({} matches) ===", pattern, found.len());
+            for (i, f) in found.iter().enumerate() {
+                if i < 30 {
+                    eprintln!("  {}", f);
+                }
+            }
+            if found.len() > 30 {
+                eprintln!("  ... and {} more", found.len() - 30);
+            }
+        } else {
+            eprintln!("\n=== Pattern: '{}' — NOT FOUND ===", pattern);
+        }
+    }
+
+    let process_name = rslean_name::Name::from_str_parts("Lean.Elab.process");
+    if let Ok(info) = env.get(&process_name) {
+        eprintln!("\n=== Lean.Elab.process details ===");
+        eprintln!(
+            "  Kind: {}",
+            if info.is_definition() { "def" } else { "other" }
+        );
+        eprintln!("  Type: {:?}", info.type_());
+    }
 }
