@@ -90,7 +90,7 @@ pub enum Keyword {
 }
 
 impl Keyword {
-    pub fn from_str(s: &str) -> Option<Keyword> {
+    pub fn parse(s: &str) -> Option<Keyword> {
         match s {
             "def" => Some(Self::Def),
             "theorem" => Some(Self::Theorem),

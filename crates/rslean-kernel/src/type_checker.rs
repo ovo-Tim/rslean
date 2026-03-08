@@ -3,7 +3,6 @@ use crate::error::{KernelError, KernelResult};
 use crate::quot;
 use rslean_expr::{
     BinderInfo, ConstantInfo, Declaration, DefinitionSafety, Expr, ExprKind, Literal,
-    ReducibilityHints,
 };
 use rslean_level::Level;
 use rslean_name::Name;
@@ -515,19 +514,18 @@ impl TypeChecker {
 
         // Apply: params, motives, minors
         let pre_args_count = (num_params + num_motives + num_minors) as usize;
-        for i in 0..std::cmp::min(pre_args_count, args.len()) {
-            result = Expr::app(result, args[i].clone());
+        for arg in args.iter().take(std::cmp::min(pre_args_count, args.len())) {
+            result = Expr::app(result, arg.clone());
         }
 
         // Apply constructor fields (skip params in major_args)
         let num_params_usize = num_params as usize;
-        for i in num_params_usize
-            ..std::cmp::min(
-                num_params_usize + rule.num_fields as usize,
-                major_args.len(),
-            )
+        for arg in major_args
+            .iter()
+            .skip(num_params_usize)
+            .take(rule.num_fields as usize)
         {
-            result = Expr::app(result, major_args[i].clone());
+            result = Expr::app(result, arg.clone());
         }
 
         // Apply remaining args after major
@@ -604,10 +602,8 @@ impl TypeChecker {
         }
 
         // App: compare head + args
-        if a.is_app() && b.is_app() {
-            if self.is_def_eq_app(&a, &b)? {
-                return Ok(true);
-            }
+        if a.is_app() && b.is_app() && self.is_def_eq_app(&a, &b)? {
+            return Ok(true);
         }
 
         // Proof irrelevance: if both have type Prop, they're equal
@@ -862,6 +858,7 @@ impl TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rslean_expr::ReducibilityHints;
 
     fn setup_nat_env() -> Environment {
         let mut env = Environment::new();

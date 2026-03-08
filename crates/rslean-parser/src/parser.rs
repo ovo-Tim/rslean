@@ -117,6 +117,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Span of the previous token (used for end-of-node spans).
+    #[allow(dead_code)]
     pub(crate) fn prev_span(&self) -> Span {
         if self.pos > 0 {
             self.tokens[self.pos - 1].span
@@ -251,6 +252,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Build a node with an explicit span.
+    #[allow(dead_code)]
     pub(crate) fn mk_node_span(
         &self,
         span: Span,
@@ -274,6 +276,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Record an error at a specific span.
+    #[allow(dead_code)]
     pub(crate) fn error_at(&mut self, span: Span, msg: impl Into<String>) {
         self.errors.push(ParseError {
             span,
@@ -283,6 +286,7 @@ impl<'a> Parser<'a> {
 
     /// Synchronize: skip tokens until we reach a command-level keyword or EOF.
     /// Used for error recovery after a parse failure.
+    #[allow(dead_code)]
     pub(crate) fn synchronize(&mut self) {
         loop {
             match self.peek_kind() {
@@ -323,6 +327,7 @@ impl<'a> Parser<'a> {
 
     /// Check if the current column is indented deeper than the top of the
     /// indent stack. Returns `true` if the stack is empty (top-level).
+    #[allow(dead_code)]
     pub(crate) fn is_indented(&self) -> bool {
         match self.indent_stack.last() {
             None => true,

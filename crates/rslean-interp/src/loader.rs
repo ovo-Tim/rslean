@@ -64,7 +64,7 @@ pub fn load_env_with_deps(root_path: &Path, search_paths: &[PathBuf]) -> Option<
         let (_, data) = rslean_olean::load_module(&path).ok()?;
         module_count += 1;
 
-        if module_count % 50 == 0 {
+        if module_count.is_multiple_of(50) {
             eprintln!(
                 "[loader] {} modules loaded in {:.1}s (queue: {}, constants: {})",
                 module_count,

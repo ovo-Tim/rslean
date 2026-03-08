@@ -44,7 +44,11 @@ pub enum KernelError {
     QuotNotInitialized,
 
     #[error("incorrect number of universe levels for '{name}': expected {expected}, got {got}")]
-    IncorrectNumLevels { name: Name, expected: usize, got: usize },
+    IncorrectNumLevels {
+        name: Name,
+        expected: usize,
+        got: usize,
+    },
 
     #[error("unsafe declaration in safe environment: {0}")]
     UnsafeDefinition(Name),

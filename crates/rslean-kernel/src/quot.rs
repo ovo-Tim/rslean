@@ -2,10 +2,18 @@ use rslean_expr::Expr;
 use rslean_name::Name;
 
 /// Quotient type constant names.
-pub fn quot_name() -> Name { Name::mk_simple("Quot") }
-pub fn quot_mk_name() -> Name { Name::from_str_parts("Quot.mk") }
-pub fn quot_lift_name() -> Name { Name::from_str_parts("Quot.lift") }
-pub fn quot_ind_name() -> Name { Name::from_str_parts("Quot.ind") }
+pub fn quot_name() -> Name {
+    Name::mk_simple("Quot")
+}
+pub fn quot_mk_name() -> Name {
+    Name::from_str_parts("Quot.mk")
+}
+pub fn quot_lift_name() -> Name {
+    Name::from_str_parts("Quot.lift")
+}
+pub fn quot_ind_name() -> Name {
+    Name::from_str_parts("Quot.ind")
+}
 
 /// Check if a name is one of the quotient primitives.
 pub fn is_quot_decl(n: &Name) -> bool {
@@ -21,10 +29,7 @@ pub fn is_quot_rec(n: &Name) -> bool {
 ///
 /// `Quot.lift f h (Quot.mk a)` reduces to `f a`
 /// `Quot.ind f h (Quot.mk a)` reduces to `f a`
-pub fn quot_reduce_rec(
-    e: &Expr,
-    whnf: &dyn Fn(&Expr) -> Expr,
-) -> Option<Expr> {
+pub fn quot_reduce_rec(e: &Expr, whnf: &dyn Fn(&Expr) -> Expr) -> Option<Expr> {
     if !e.is_app() {
         return None;
     }

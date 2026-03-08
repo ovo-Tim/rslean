@@ -316,8 +316,8 @@ impl<'a> Deserializer<'a> {
 
             leaf_fn_ref = fn_ref;
             match fn_ref {
-                ObjRef::Ptr(p) if !self.expr_cache.contains_key(&p)
-                    && self.region.obj_tag(p) == 5 =>
+                ObjRef::Ptr(p)
+                    if !self.expr_cache.contains_key(&p) && self.region.obj_tag(p) == 5 =>
                 {
                     current_pos = p;
                 }
@@ -358,12 +358,17 @@ impl<'a> Deserializer<'a> {
             let bi = self.region.ctor_scalar_u8(current_pos, 3, 0);
             let name = self.deser_name(name_ref);
 
-            binders.push(Binder { pos: current_pos, name, type_ref, bi });
+            binders.push(Binder {
+                pos: current_pos,
+                name,
+                type_ref,
+                bi,
+            });
 
             leaf_body_ref = body_ref;
             match body_ref {
-                ObjRef::Ptr(p) if !self.expr_cache.contains_key(&p)
-                    && self.region.obj_tag(p) == 6 =>
+                ObjRef::Ptr(p)
+                    if !self.expr_cache.contains_key(&p) && self.region.obj_tag(p) == 6 =>
                 {
                     current_pos = p;
                 }
@@ -403,12 +408,17 @@ impl<'a> Deserializer<'a> {
             let bi = self.region.ctor_scalar_u8(current_pos, 3, 0);
             let name = self.deser_name(name_ref);
 
-            binders.push(Binder { pos: current_pos, name, type_ref, bi });
+            binders.push(Binder {
+                pos: current_pos,
+                name,
+                type_ref,
+                bi,
+            });
 
             leaf_body_ref = body_ref;
             match body_ref {
-                ObjRef::Ptr(p) if !self.expr_cache.contains_key(&p)
-                    && self.region.obj_tag(p) == 7 =>
+                ObjRef::Ptr(p)
+                    if !self.expr_cache.contains_key(&p) && self.region.obj_tag(p) == 7 =>
                 {
                     current_pos = p;
                 }
@@ -448,12 +458,18 @@ impl<'a> Deserializer<'a> {
             let nondep = self.region.ctor_scalar_u8(current_pos, 4, 0) != 0;
             let name = self.deser_name(name_ref);
 
-            binders.push(LetBinder { pos: current_pos, name, type_ref, val_ref, nondep });
+            binders.push(LetBinder {
+                pos: current_pos,
+                name,
+                type_ref,
+                val_ref,
+                nondep,
+            });
 
             leaf_body_ref = body_ref;
             match body_ref {
-                ObjRef::Ptr(p) if !self.expr_cache.contains_key(&p)
-                    && self.region.obj_tag(p) == 8 =>
+                ObjRef::Ptr(p)
+                    if !self.expr_cache.contains_key(&p) && self.region.obj_tag(p) == 8 =>
                 {
                     current_pos = p;
                 }

@@ -14,6 +14,7 @@ impl<'a> Parser<'a> {
         self.parse_infix(lhs, 0)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn parse_expr_arg(&mut self) -> Syntax {
         self.skip_newlines();
         self.parse_atom()

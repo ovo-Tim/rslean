@@ -1,12 +1,12 @@
-mod header;
-mod region;
 mod deserialize;
 mod error;
+mod header;
+mod region;
 
+pub use deserialize::{Deserializer, Import, ModuleData};
+pub use error::{OleanError, OleanResult};
 pub use header::{OleanHeader, HEADER_SIZE};
 pub use region::{CompactedRegion, ObjRef};
-pub use deserialize::{Deserializer, ModuleData, Import};
-pub use error::{OleanError, OleanResult};
 
 use std::path::Path;
 
@@ -129,7 +129,10 @@ mod tests {
                 }
                 println!("  Constants: {}", module_data.constants.len());
                 println!("  Const names: {}", module_data.const_names.len());
-                println!("  Extra const names: {}", module_data.extra_const_names.len());
+                println!(
+                    "  Extra const names: {}",
+                    module_data.extra_const_names.len()
+                );
 
                 // Print first few constant names
                 for (i, c) in module_data.constants.iter().enumerate() {
@@ -179,11 +182,16 @@ mod tests {
         println!("  Imports: {}", module_data.imports.len());
         println!("  Constants: {}", module_data.constants.len());
         println!("  Const names: {}", module_data.const_names.len());
-        assert!(module_data.constants.len() > 100, "Prelude should have many constants");
+        assert!(
+            module_data.constants.len() > 100,
+            "Prelude should have many constants"
+        );
         assert_eq!(module_data.constants.len(), module_data.const_names.len());
 
         // Verify some expected declarations exist
-        let names: Vec<String> = module_data.constants.iter()
+        let names: Vec<String> = module_data
+            .constants
+            .iter()
             .map(|c| c.name().to_string())
             .collect();
         println!("  First 20 constants:");

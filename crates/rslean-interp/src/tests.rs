@@ -1872,7 +1872,7 @@ fn test_olean_list_map() {
     // Build the list [1, 2, 3] = cons 1 (cons 2 (cons 3 nil))
     let nil = Expr::mk_app(
         Expr::const_(Name::from_str_parts("List.nil"), vec![Level::one()]),
-        &[nat.clone()],
+        std::slice::from_ref(&nat),
     );
     let list = Expr::mk_app(
         Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
@@ -1939,7 +1939,7 @@ fn test_olean_list_rec_direct() {
     // Build the list [1, 2, 3]
     let nil = Expr::mk_app(
         Expr::const_(Name::from_str_parts("List.nil"), vec![Level::one()]),
-        &[nat.clone()],
+        std::slice::from_ref(&nat),
     );
     let list_3 = Expr::mk_app(
         Expr::const_(Name::from_str_parts("List.cons"), vec![Level::one()]),
@@ -1957,7 +1957,7 @@ fn test_olean_list_rec_direct() {
     // motive: fun (_ : List Nat) => List Nat (constant motive)
     let list_nat = Expr::mk_app(
         Expr::const_(Name::from_str_parts("List"), vec![Level::one()]),
-        &[nat.clone()],
+        std::slice::from_ref(&nat),
     );
     let motive = Expr::lam(
         Name::mk_simple("_"),
@@ -1969,7 +1969,7 @@ fn test_olean_list_rec_direct() {
     // nil case: List.nil Nat
     let nil_case = Expr::mk_app(
         Expr::const_(Name::from_str_parts("List.nil"), vec![Level::one()]),
-        &[nat.clone()],
+        std::slice::from_ref(&nat),
     );
 
     // cons case: fun (head : Nat) (_ : List Nat) (ih : List Nat) => List.cons Nat (Nat.add head 1) ih
@@ -2030,25 +2030,20 @@ fn test_olean_list_rec_direct() {
 fn list_to_vec(val: &Value) -> Vec<Value> {
     let mut result = Vec::new();
     let mut current = val.clone();
-    loop {
-        match &current {
-            Value::Ctor { name, fields, .. } => {
-                let name_str = name.to_string();
-                if name_str == "List.nil" {
-                    break;
-                } else if name_str == "List.cons" {
-                    // fields[0] = head, fields[1] = tail
-                    if fields.len() >= 2 {
-                        result.push(fields[0].clone());
-                        current = fields[1].clone();
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-            _ => break,
+    while let Value::Ctor {
+        ref name,
+        ref fields,
+        ..
+    } = current
+    {
+        let name_str = name.to_string();
+        if name_str == "List.nil" {
+            break;
+        } else if name_str == "List.cons" && fields.len() >= 2 {
+            result.push(fields[0].clone());
+            current = fields[1].clone();
+        } else {
+            break;
         }
     }
     result
@@ -2190,7 +2185,7 @@ fn test_int_arithmetic() {
     let result = crate::builtins::test_builtin_call("Int.mul", &[a.clone(), b.clone()]).unwrap();
     assert_eq!(*result.as_int().unwrap(), BigInt::from(-30));
 
-    let result = crate::builtins::test_builtin_call("Int.neg", &[b.clone()]).unwrap();
+    let result = crate::builtins::test_builtin_call("Int.neg", std::slice::from_ref(&b)).unwrap();
     assert_eq!(*result.as_int().unwrap(), BigInt::from(3));
 }
 
@@ -2203,7 +2198,8 @@ fn test_bytearray_operations() {
     let pushed =
         crate::builtins::test_builtin_call("ByteArray.push", &[empty, Value::nat_small(0x42)])
             .unwrap();
-    let size = crate::builtins::test_builtin_call("ByteArray.size", &[pushed.clone()]).unwrap();
+    let size = crate::builtins::test_builtin_call("ByteArray.size", std::slice::from_ref(&pushed))
+        .unwrap();
     assert_eq!(*size.as_nat().unwrap(), BigUint::from(1u64));
 
     let byte = crate::builtins::test_builtin_call("ByteArray.get!", &[pushed, Value::nat_small(0)])
@@ -2407,14 +2403,14 @@ fn test_lean_expr_builtins_via_eval() {
     };
 
     // isBVar should return true (Bool.true = tag 1)
-    let is_bvar = test_builtin_call("Lean.Expr.isBVar", &[bvar_ctor.clone()]).unwrap();
+    let is_bvar = test_builtin_call("Lean.Expr.isBVar", std::slice::from_ref(&bvar_ctor)).unwrap();
     assert!(
         matches!(&is_bvar, Value::Ctor { tag: 1, .. }),
         "expected Bool.true"
     );
 
     // isFVar should return false (Bool.false = tag 0)
-    let is_fvar = test_builtin_call("Lean.Expr.isFVar", &[bvar_ctor.clone()]).unwrap();
+    let is_fvar = test_builtin_call("Lean.Expr.isFVar", std::slice::from_ref(&bvar_ctor)).unwrap();
     assert!(
         matches!(&is_fvar, Value::Ctor { tag: 0, .. }),
         "expected Bool.false"
@@ -2491,7 +2487,7 @@ fn test_expr_instantiate1() {
     match &result {
         Value::Ctor { tag: 4, fields, .. } => {
             // const(name, levels) — name should be "Nat"
-            assert!(fields.len() >= 1);
+            assert!(!fields.is_empty());
         }
         _ => panic!("Expected Expr.const after instantiate1, got: {:?}", result),
     }
@@ -2795,8 +2791,8 @@ fn is_compiler_aux_str(name: &str) -> bool {
         || name.ends_with("._cstage2")
         || name.ends_with("._neutral")
         || name.ends_with("._rarg")
-        || name.contains("._closed_") && name.chars().last().map_or(false, |c| c.is_ascii_digit())
-        || name.contains("._lambda_") && name.chars().last().map_or(false, |c| c.is_ascii_digit())
+        || name.contains("._closed_") && name.chars().last().is_some_and(|c| c.is_ascii_digit())
+        || name.contains("._lambda_") && name.chars().last().is_some_and(|c| c.is_ascii_digit())
 }
 
 #[test]

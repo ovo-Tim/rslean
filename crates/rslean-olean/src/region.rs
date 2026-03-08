@@ -1,10 +1,14 @@
 use crate::error::{OleanError, OleanResult};
 
 /// Lean object tags for special (non-constructor) objects.
+#[allow(dead_code)]
 pub const LEAN_MAX_CTOR_TAG: u8 = 243;
+#[allow(dead_code)]
 pub const LEAN_TAG_CLOSURE: u8 = 245;
 pub const LEAN_TAG_ARRAY: u8 = 246;
+#[allow(dead_code)]
 pub const LEAN_TAG_STRUCT_ARRAY: u8 = 247;
+#[allow(dead_code)]
 pub const LEAN_TAG_SCALAR_ARRAY: u8 = 248;
 pub const LEAN_TAG_STRING: u8 = 249;
 pub const LEAN_TAG_MPZ: u8 = 250;
@@ -197,7 +201,9 @@ impl CompactedRegion {
         let limb_ptr_raw = self.read_u64(pos + 16); // bytes 16-23
 
         if mp_size < 0 {
-            return Err(OleanError::Deserialize("negative MPZ not supported as u64".into()));
+            return Err(OleanError::Deserialize(
+                "negative MPZ not supported as u64".into(),
+            ));
         }
         if mp_size == 0 {
             return Ok(0);
@@ -229,7 +235,9 @@ impl CompactedRegion {
         let m_sign = self.read_u8(pos + 24);
 
         if m_sign != 0 {
-            return Err(OleanError::Deserialize("negative MPZ not supported as u64".into()));
+            return Err(OleanError::Deserialize(
+                "negative MPZ not supported as u64".into(),
+            ));
         }
         if m_size == 0 {
             return Ok(0);

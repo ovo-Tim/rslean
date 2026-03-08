@@ -7,8 +7,10 @@ use rslean_lexer::TokenKind;
 /// Binding power pair: (left, right).
 /// For left-associative ops: right > left.
 /// For right-associative ops: left > right.
+#[allow(dead_code)]
 pub type BindingPower = (u32, u32);
 
+#[allow(dead_code)]
 pub fn infix_binding_power(op: &TokenKind) -> Option<BindingPower> {
     let bp = match op {
         // Pipe / dollar (low precedence)
@@ -71,6 +73,7 @@ pub fn infix_binding_power(op: &TokenKind) -> Option<BindingPower> {
     Some(bp)
 }
 
+#[allow(dead_code)]
 pub fn prefix_binding_power(op: &TokenKind) -> Option<u32> {
     match op {
         TokenKind::Neg | TokenKind::Bang | TokenKind::Complement | TokenKind::Tilde => Some(200),

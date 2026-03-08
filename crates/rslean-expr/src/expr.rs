@@ -340,7 +340,7 @@ impl Expr {
     }
 
     pub fn mdata(md: MData, e: Expr) -> Self {
-        let data = e.data_ref().clone();
+        let data = *e.data_ref();
         let data = ExprData {
             hash: mix(47, data.hash),
             ..data
@@ -707,7 +707,7 @@ impl Expr {
 
     /// Replace loose BVar(0) with a single expression.
     pub fn instantiate1(&self, s: &Expr) -> Expr {
-        self.instantiate(&[s.clone()])
+        self.instantiate(std::slice::from_ref(s))
     }
 
     /// Reverse instantiate: subst[n-1] replaces BVar(0), subst[n-2] replaces BVar(1), etc.
@@ -1150,22 +1150,22 @@ impl ExprRepr {
         }
     }
 
-    fn to_expr(self) -> Expr {
+    fn into_expr(self) -> Expr {
         match self {
             ExprRepr::BVar(i) => Expr::bvar(i),
             ExprRepr::FVar(n) => Expr::fvar(n),
             ExprRepr::MVar(n) => Expr::mvar(n),
             ExprRepr::Sort(l) => Expr::sort(l),
             ExprRepr::Const(n, ls) => Expr::const_(n, ls),
-            ExprRepr::App(f, a) => Expr::app(f.to_expr(), a.to_expr()),
-            ExprRepr::Lam(n, d, b, bi) => Expr::lam(n, d.to_expr(), b.to_expr(), bi),
-            ExprRepr::ForallE(n, d, b, bi) => Expr::forall_e(n, d.to_expr(), b.to_expr(), bi),
+            ExprRepr::App(f, a) => Expr::app(f.into_expr(), a.into_expr()),
+            ExprRepr::Lam(n, d, b, bi) => Expr::lam(n, d.into_expr(), b.into_expr(), bi),
+            ExprRepr::ForallE(n, d, b, bi) => Expr::forall_e(n, d.into_expr(), b.into_expr(), bi),
             ExprRepr::LetE(n, t, v, b, nd) => {
-                Expr::let_e(n, t.to_expr(), v.to_expr(), b.to_expr(), nd)
+                Expr::let_e(n, t.into_expr(), v.into_expr(), b.into_expr(), nd)
             }
             ExprRepr::Lit(l) => Expr::lit(l),
-            ExprRepr::MData(md, e) => Expr::mdata(md, e.to_expr()),
-            ExprRepr::Proj(sn, i, e) => Expr::proj(sn, i, e.to_expr()),
+            ExprRepr::MData(md, e) => Expr::mdata(md, e.into_expr()),
+            ExprRepr::Proj(sn, i, e) => Expr::proj(sn, i, e.into_expr()),
         }
     }
 }
@@ -1178,7 +1178,7 @@ impl Serialize for Expr {
 
 impl<'de> Deserialize<'de> for Expr {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        ExprRepr::deserialize(deserializer).map(|r| r.to_expr())
+        ExprRepr::deserialize(deserializer).map(|r| r.into_expr())
     }
 }
 
@@ -1284,7 +1284,7 @@ mod tests {
     fn test_abstract() {
         let c = Expr::const_(Name::mk_simple("c"), vec![]);
         let body = Expr::app(c.clone(), c.clone());
-        let abstracted = body.abstract_(&[c.clone()]);
+        let abstracted = body.abstract_(std::slice::from_ref(&c));
         let expected = Expr::app(Expr::bvar(0), Expr::bvar(0));
         assert_eq!(abstracted, expected);
     }

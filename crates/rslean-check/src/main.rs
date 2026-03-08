@@ -235,7 +235,7 @@ fn run_lean_mode(paths: Vec<PathBuf>, lean_path: Option<PathBuf>, verbose: bool)
     let mut errors = 0usize;
 
     for path in paths {
-        if !path.is_file() || !path.extension().is_some_and(|e| e == "lean") {
+        if !path.is_file() || path.extension().is_none_or(|e| e != "lean") {
             bail!(
                 "Lean source mode accepts only .lean files: {}",
                 path.display()

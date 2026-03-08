@@ -82,10 +82,8 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
-            if self.starts_with("#") {
-                if self.lex_hash_keyword() {
-                    continue;
-                }
+            if self.starts_with("#") && self.lex_hash_keyword() {
+                continue;
             }
 
             if self.peek_char().is_some_and(Self::is_ident_start) {
@@ -163,11 +161,7 @@ impl<'a> Lexer<'a> {
 
     fn lex_doc_comment(&mut self, module: bool) {
         let start = self.pos;
-        if module {
-            self.pos += 3;
-        } else {
-            self.pos += 3;
-        }
+        self.pos += 3;
 
         let content_start = self.pos;
         let mut depth = 1usize;
@@ -430,7 +424,7 @@ impl<'a> Lexer<'a> {
             return;
         }
 
-        if let Some(kw) = Keyword::from_str(text) {
+        if let Some(kw) = Keyword::parse(text) {
             self.push_token(TokenKind::Keyword(kw), start, self.pos);
             return;
         }
@@ -553,7 +547,7 @@ impl<'a> Lexer<'a> {
         }
 
         let text = &self.source[start..self.pos];
-        if let Some(kw) = Keyword::from_str(text) {
+        if let Some(kw) = Keyword::parse(text) {
             self.push_token(TokenKind::Keyword(kw), start, self.pos);
         } else {
             self.push_token(TokenKind::Hash, start, start + 1);
@@ -567,6 +561,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_operator_or_punct(&mut self) -> bool {
+        #[allow(clippy::type_complexity)]
         const OPS: [(&str, fn() -> TokenKind); 36] = [
             ("<<<", || TokenKind::ShiftLeft),
             (">>>", || TokenKind::ShiftRight),
@@ -1096,7 +1091,7 @@ mod tests {
 
     #[test]
     fn keyword_roundtrip_display() {
-        assert_eq!(Keyword::from_str("def"), Some(Keyword::Def));
+        assert_eq!(Keyword::parse("def"), Some(Keyword::Def));
         assert_eq!(Keyword::Def.as_str(), "def");
         assert_eq!(Keyword::Def.to_string(), "def");
     }

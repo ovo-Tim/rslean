@@ -496,7 +496,7 @@ impl Level {
                     let na = a.normalize();
                     push_max_args(&na, &mut normalized);
                 }
-                normalized.sort_by(|a, b| norm_lt_cmp(a, b));
+                normalized.sort_by(norm_lt_cmp);
                 // Deduplicate: keep highest offset for same base
                 let mut rargs: Vec<Level> = Vec::new();
                 let mut i = 0;
@@ -778,12 +778,12 @@ impl LevelRepr {
         }
     }
 
-    fn to_level(self) -> Level {
+    fn into_level(self) -> Level {
         match self {
             LevelRepr::Zero => Level::zero(),
-            LevelRepr::Succ(inner) => Level::succ(inner.to_level()),
-            LevelRepr::Max(a, b) => Level::max_core(a.to_level(), b.to_level()),
-            LevelRepr::IMax(a, b) => Level::imax_core(a.to_level(), b.to_level()),
+            LevelRepr::Succ(inner) => Level::succ(inner.into_level()),
+            LevelRepr::Max(a, b) => Level::max_core(a.into_level(), b.into_level()),
+            LevelRepr::IMax(a, b) => Level::imax_core(a.into_level(), b.into_level()),
             LevelRepr::Param(n) => Level::param(n),
             LevelRepr::MVar(n) => Level::mvar(n),
         }
@@ -798,7 +798,7 @@ impl Serialize for Level {
 
 impl<'de> Deserialize<'de> for Level {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        LevelRepr::deserialize(deserializer).map(|r| r.to_level())
+        LevelRepr::deserialize(deserializer).map(|r| r.into_level())
     }
 }
 

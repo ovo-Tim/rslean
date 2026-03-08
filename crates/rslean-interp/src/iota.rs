@@ -158,24 +158,7 @@ pub fn apply_recursor(
     // values as parameters (params, motives, minors, fields). We evaluate
     // the RHS to a closure and then apply the substitution values one by one.
     let mut result = interp.eval(&rhs, &LocalEnv::new())?;
-    for (i, v) in subst.into_iter().enumerate() {
-        if let Value::Ctor {
-            name: ref cname,
-            ref fields,
-            ..
-        } = &v
-        {
-            if false
-                && cname.to_string().contains("Result.ok")
-                && fields.len() >= 2
-                && !matches!(&fields[1], Value::Erased)
-            {
-                eprintln!(
-                    "[IOTA-APPLY-RESULT-OK] step={} rec={} subst_idx={} val={:?}",
-                    interp.total_steps, rec_name, i, v
-                );
-            }
-        }
+    for v in subst.into_iter() {
         result = interp.apply(result, v)?;
     }
     Ok(result)

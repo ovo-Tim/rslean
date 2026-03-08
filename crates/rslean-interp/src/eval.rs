@@ -11,6 +11,7 @@ use crate::error::{InterpError, InterpResult};
 use crate::iota;
 use crate::value::{FuncRef, Value};
 
+#[allow(dead_code)]
 fn short_debug(v: &Value) -> String {
     match v {
         Value::Closure {
@@ -30,6 +31,7 @@ fn short_debug(v: &Value) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn expr_debug(e: &Expr) -> String {
     match e.kind() {
         ExprKind::BVar(i) => format!("BVar({})", i),
@@ -125,7 +127,7 @@ impl Interpreter {
     pub fn eval(&mut self, expr: &Expr, local_env: &LocalEnv) -> InterpResult<Value> {
         stacker::maybe_grow(32 * 1024, 2 * 1024 * 1024, || {
             self.total_steps += 1;
-            if self.total_steps % 1_000_000 == 0 {
+            if self.total_steps.is_multiple_of(1_000_000) {
                 eprintln!(
                     "[PROGRESS] step {} depth={}",
                     self.total_steps, self.eval_depth
@@ -249,7 +251,7 @@ impl Interpreter {
         if self.trace_consts {
             *self.const_eval_counts.entry(name.clone()).or_insert(0) += 1;
             let count = self.const_eval_counts[name];
-            if count <= 3 || count % 1000 == 0 {
+            if count <= 3 || count.is_multiple_of(1000) {
                 eprintln!(
                     "[trace] eval_const {} (count={}, total_steps={})",
                     name, count, self.total_steps
@@ -709,7 +711,7 @@ impl Interpreter {
             FuncRef::Definition(ref defname, ref levels) => {
                 let val = self.eval_const(defname, levels)?;
                 let mut result = val;
-                for (_i, arg) in args.into_iter().enumerate() {
+                for arg in args.into_iter() {
                     result = self.apply(result, arg)?;
                 }
                 Ok(result)
@@ -773,7 +775,7 @@ impl Interpreter {
             }
             FuncRef::RecursorFn(name, levels) => iota::apply_recursor(self, &name, &levels, args),
             FuncRef::ForwardApply {
-                name,
+                name: _name,
                 func_idx,
                 arg_idx,
                 ..

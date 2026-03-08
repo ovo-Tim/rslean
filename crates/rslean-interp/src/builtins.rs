@@ -3156,7 +3156,7 @@ fn lean_kernel_whnf(args: &[Value]) -> InterpResult<Value> {
     let expr = args
         .iter()
         .rev()
-        .find_map(|v| value_to_expr(v))
+        .find_map(value_to_expr)
         .ok_or_else(|| InterpError::BuiltinError("Kernel.whnf: no Expr arg".into()))?;
     let mut tc = rslean_kernel::TypeChecker::new((*env).clone());
     match tc.whnf(&expr) {
@@ -3172,7 +3172,7 @@ fn lean_kernel_check(args: &[Value]) -> InterpResult<Value> {
     let expr = args
         .iter()
         .rev()
-        .find_map(|v| value_to_expr(v))
+        .find_map(value_to_expr)
         .ok_or_else(|| InterpError::BuiltinError("Kernel.check: no Expr arg".into()))?;
     let mut tc = rslean_kernel::TypeChecker::new((*env).clone());
     match tc.infer_type(&expr) {
@@ -4389,7 +4389,7 @@ fn array_get_checked(args: &[Value]) -> InterpResult<Value> {
     // Also serves as a bounds-checked fallback: Array.get : Array α → Nat → α → α
     let arr = find_array(args)?;
     // Find a Nat index from args (skip the type erased arg)
-    let idx = args.iter().filter_map(|v| v.as_nat()).last();
+    let idx = args.iter().filter_map(|v| v.as_nat()).next_back();
     if let Some(i) = idx {
         use num_traits::ToPrimitive;
         let i = i.to_usize().unwrap_or(0);
@@ -4428,7 +4428,7 @@ fn lean_mk_level_succ(args: &[Value]) -> InterpResult<Value> {
     let l = args
         .iter()
         .find(|v| matches!(v, Value::Ctor { .. }))
-        .map(|v| value_to_level(v))
+        .map(value_to_level)
         .unwrap_or_else(Level::zero);
     Ok(level_to_value(&Level::succ(l)))
 }
@@ -4437,7 +4437,7 @@ fn lean_mk_level_max(args: &[Value]) -> InterpResult<Value> {
     let levels: Vec<Level> = args
         .iter()
         .filter(|v| matches!(v, Value::Ctor { .. }))
-        .map(|v| value_to_level(v))
+        .map(value_to_level)
         .collect();
     let l = levels.first().cloned().unwrap_or_else(Level::zero);
     let r = levels.get(1).cloned().unwrap_or_else(Level::zero);
@@ -4448,7 +4448,7 @@ fn lean_mk_level_imax(args: &[Value]) -> InterpResult<Value> {
     let levels: Vec<Level> = args
         .iter()
         .filter(|v| matches!(v, Value::Ctor { .. }))
-        .map(|v| value_to_level(v))
+        .map(value_to_level)
         .collect();
     let l = levels.first().cloned().unwrap_or_else(Level::zero);
     let r = levels.get(1).cloned().unwrap_or_else(Level::zero);
@@ -4487,7 +4487,7 @@ fn lean_level_normalize(args: &[Value]) -> InterpResult<Value> {
     let l = args
         .iter()
         .find(|v| matches!(v, Value::Ctor { .. }))
-        .map(|v| value_to_level(v))
+        .map(value_to_level)
         .unwrap_or_else(Level::zero);
     Ok(level_to_value(&l))
 }
