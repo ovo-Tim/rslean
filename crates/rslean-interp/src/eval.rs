@@ -42,7 +42,8 @@ fn expr_debug(e: &Expr) -> String {
     }
 }
 
-const MAX_EVAL_DEPTH: u32 = 512;
+const DEFAULT_MAX_EVAL_DEPTH: u32 = 512;
+const UNLIMITED_MAX_EVAL_DEPTH: u32 = u32::MAX;
 const DEFAULT_MAX_STEPS: u64 = 100_000_000; // 100M steps default limit
 
 /// The tree-walking interpreter for Lean 4 kernel expressions.
@@ -51,6 +52,8 @@ pub struct Interpreter {
     builtins: FxHashMap<Name, BuiltinFn>,
     const_cache: FxHashMap<Name, Value>,
     eval_depth: u32,
+    /// Maximum eval recursion depth before aborting.
+    pub max_eval_depth: u32,
     /// Total number of eval() calls since creation.
     pub total_steps: u64,
     /// Maximum number of eval() steps before aborting (0 = unlimited).
@@ -70,6 +73,7 @@ impl Interpreter {
             builtins,
             const_cache: FxHashMap::default(),
             eval_depth: 0,
+            max_eval_depth: DEFAULT_MAX_EVAL_DEPTH,
             total_steps: 0,
             max_steps: DEFAULT_MAX_STEPS,
             trace_consts: false,
@@ -81,6 +85,7 @@ impl Interpreter {
     pub fn new_unlimited(env: Environment) -> Self {
         let mut interp = Self::new(env);
         interp.max_steps = 0;
+        interp.max_eval_depth = UNLIMITED_MAX_EVAL_DEPTH;
         interp
     }
 
@@ -118,24 +123,26 @@ impl Interpreter {
     }
 
     pub fn eval(&mut self, expr: &Expr, local_env: &LocalEnv) -> InterpResult<Value> {
-        self.total_steps += 1;
-        if self.total_steps % 100_000 == 0 {
-            eprintln!(
-                "[PROGRESS] step {} depth={}",
-                self.total_steps, self.eval_depth
-            );
-        }
-        if self.max_steps > 0 && self.total_steps > self.max_steps {
-            return Err(InterpError::StepLimitExceeded(self.total_steps));
-        }
-        self.eval_depth += 1;
-        if self.eval_depth > MAX_EVAL_DEPTH {
+        stacker::maybe_grow(32 * 1024, 2 * 1024 * 1024, || {
+            self.total_steps += 1;
+            if self.total_steps % 1_000_000 == 0 {
+                eprintln!(
+                    "[PROGRESS] step {} depth={}",
+                    self.total_steps, self.eval_depth
+                );
+            }
+            if self.max_steps > 0 && self.total_steps > self.max_steps {
+                return Err(InterpError::StepLimitExceeded(self.total_steps));
+            }
+            self.eval_depth += 1;
+            if self.eval_depth > self.max_eval_depth {
+                self.eval_depth -= 1;
+                return Err(InterpError::StackOverflow(self.max_eval_depth));
+            }
+            let result = self.eval_inner(expr, local_env);
             self.eval_depth -= 1;
-            return Err(InterpError::StackOverflow(MAX_EVAL_DEPTH));
-        }
-        let result = self.eval_inner(expr, local_env);
-        self.eval_depth -= 1;
-        result
+            result
+        })
     }
 
     fn eval_inner(&mut self, expr: &Expr, local_env: &LocalEnv) -> InterpResult<Value> {
@@ -655,36 +662,40 @@ impl Interpreter {
 
     /// Apply a function value to an argument.
     pub(crate) fn apply(&mut self, func: Value, arg: Value) -> InterpResult<Value> {
-        self.total_steps += 1;
-        if self.max_steps > 0 && self.total_steps > self.max_steps {
-            return Err(InterpError::StepLimitExceeded(self.total_steps));
-        }
-        match func {
-            Value::Closure {
-                func: fref,
-                mut captured,
-                remaining_arity,
-            } => {
-                captured.push(arg);
-                if remaining_arity <= 1 {
-                    self.apply_fully(fref, captured)
-                } else {
-                    Ok(Value::Closure {
-                        func: fref,
-                        captured,
-                        remaining_arity: remaining_arity - 1,
-                    })
-                }
+        stacker::maybe_grow(32 * 1024, 2 * 1024 * 1024, || {
+            self.total_steps += 1;
+            if self.max_steps > 0 && self.total_steps > self.max_steps {
+                return Err(InterpError::StepLimitExceeded(self.total_steps));
             }
-            Value::Erased => Ok(Value::Erased),
-            Value::KernelExpr(e) => Ok(Value::KernelExpr(e)),
-            // IO result Ctor applied as function — already computed, return as-is
-            Value::Ctor { ref name, .. } if name.to_string().contains("EStateM.Result") => Ok(func),
-            _ => Err(InterpError::TypeError(format!(
-                "cannot apply non-function value: {:?} to arg: {:?}",
-                func, arg
-            ))),
-        }
+            match func {
+                Value::Closure {
+                    func: fref,
+                    mut captured,
+                    remaining_arity,
+                } => {
+                    captured.push(arg);
+                    if remaining_arity <= 1 {
+                        self.apply_fully(fref, captured)
+                    } else {
+                        Ok(Value::Closure {
+                            func: fref,
+                            captured,
+                            remaining_arity: remaining_arity - 1,
+                        })
+                    }
+                }
+                Value::Erased => Ok(Value::Erased),
+                Value::KernelExpr(e) => Ok(Value::KernelExpr(e)),
+                // IO result Ctor applied as function — already computed, return as-is
+                Value::Ctor { ref name, .. } if name.to_string().contains("EStateM.Result") => {
+                    Ok(func)
+                }
+                _ => Err(InterpError::TypeError(format!(
+                    "cannot apply non-function value: {:?} to arg: {:?}",
+                    func, arg
+                ))),
+            }
+        })
     }
 
     /// Execute a fully-applied function.

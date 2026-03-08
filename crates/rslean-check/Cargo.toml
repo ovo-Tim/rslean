@@ -13,6 +13,7 @@ rslean-level = { workspace = true }
 rslean-expr = { workspace = true }
 rslean-kernel = { workspace = true }
 rslean-olean = { workspace = true }
+rslean-interp = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

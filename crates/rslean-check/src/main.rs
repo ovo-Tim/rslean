@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
+use rslean_interp::{loader, Interpreter};
 use rslean_kernel::Environment;
 use rslean_name::Name;
 use rslean_olean::{load_module, ModuleData, OleanHeader};
@@ -10,7 +11,7 @@ use std::time::Instant;
 #[derive(Parser, Debug)]
 #[command(
     name = "rslean",
-    about = "RSLean type checker — loads and checks .olean files"
+    about = "RSLean type checker — loads and checks .olean and .lean files"
 )]
 struct Cli {
     /// Path to the .olean file(s) or Lean library root directory
@@ -28,9 +29,21 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
+    #[arg(
+        long = "lean-path",
+        help = "Path to Lean lib directory (overrides auto-detection)"
+    )]
+    lean_path: Option<PathBuf>,
+
     /// Print statistics
     #[arg(long)]
     stats: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InputMode {
+    Lean,
+    Olean,
 }
 
 /// Loaded module with its header and data.
@@ -152,6 +165,113 @@ fn guess_module_name(path: &Path) -> Name {
     Name::mk_simple(stem.to_string())
 }
 
+fn detect_input_mode(paths: &[PathBuf]) -> Result<InputMode> {
+    let mut has_lean_file = false;
+    let mut has_olean_file = false;
+    let mut has_dir = false;
+
+    for p in paths {
+        if p.is_dir() {
+            has_dir = true;
+            continue;
+        }
+
+        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+            match ext {
+                "lean" => has_lean_file = true,
+                "olean" => has_olean_file = true,
+                _ => {}
+            }
+        }
+    }
+
+    if has_lean_file && has_olean_file {
+        bail!("Cannot mix .lean and .olean inputs in one invocation");
+    }
+    if has_lean_file && has_dir {
+        bail!("Cannot mix .lean files and directories in one invocation");
+    }
+
+    if has_lean_file {
+        Ok(InputMode::Lean)
+    } else {
+        Ok(InputMode::Olean)
+    }
+}
+
+fn load_lean_environment(lean_path: Option<PathBuf>) -> Result<Environment> {
+    if let Some(lean_lib_dir) = lean_path {
+        let search_paths = vec![lean_lib_dir.join("library"), lean_lib_dir.clone()];
+        let lean_module = Name::from_str_parts("Lean");
+        let root_path = loader::resolve_module(&lean_module, &search_paths).with_context(|| {
+            format!(
+                "Could not resolve Lean module under {}",
+                lean_lib_dir.display()
+            )
+        })?;
+        return loader::load_env_with_deps(&root_path, &search_paths).with_context(|| {
+            format!(
+                "Failed to load Lean library from {}",
+                lean_lib_dir.display()
+            )
+        });
+    }
+
+    loader::load_lean_library().with_context(|| {
+        "Could not find Lean library. Install Lean via elan or pass --lean-path".to_string()
+    })
+}
+
+fn run_lean_mode(paths: Vec<PathBuf>, lean_path: Option<PathBuf>, verbose: bool) -> Result<()> {
+    let env_load_start = Instant::now();
+    let env = load_lean_environment(lean_path)?;
+    if verbose {
+        eprintln!(
+            "Loaded Lean library environment in {:.2?}",
+            env_load_start.elapsed()
+        );
+    }
+
+    let mut errors = 0usize;
+
+    for path in paths {
+        if !path.is_file() || !path.extension().is_some_and(|e| e == "lean") {
+            bail!(
+                "Lean source mode accepts only .lean files: {}",
+                path.display()
+            );
+        }
+
+        let source = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let file_name = path.to_string_lossy().to_string();
+
+        let file_start = Instant::now();
+        let mut interp = Interpreter::new_unlimited(env.clone());
+
+        match interp.process_lean_input(&source, &file_name) {
+            Ok((_env_val, _msg_val)) => {
+                eprintln!(
+                    "✓ {}: elaboration succeeded ({} steps, {:.2?})",
+                    file_name,
+                    interp.total_steps,
+                    file_start.elapsed()
+                );
+            }
+            Err(err) => {
+                eprintln!("✗ {}: {}", file_name, err);
+                errors += 1;
+            }
+        }
+    }
+
+    if errors > 0 {
+        bail!("{} elaboration error(s)", errors);
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -166,6 +286,21 @@ fn main() -> Result<()> {
 
     if cli.paths.is_empty() {
         bail!("No input files specified. Usage: rslean <path.olean> [-I <search_path>]");
+    }
+
+    let mode = detect_input_mode(&cli.paths)?;
+
+    if mode == InputMode::Lean {
+        let paths = cli.paths.clone();
+        let lean_path = cli.lean_path.clone();
+        let verbose = cli.verbose;
+
+        let builder = std::thread::Builder::new().stack_size(64 * 1024 * 1024);
+        let handler = builder
+            .spawn(move || run_lean_mode(paths, lean_path, verbose))
+            .expect("spawn thread");
+        handler.join().expect("thread panicked")?;
+        return Ok(());
     }
 
     let start = Instant::now();

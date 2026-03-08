@@ -59,3 +59,6 @@ bincode = "1"
 # Logging
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+# Stack growth for deep recursion
+stacker = "0.1"
